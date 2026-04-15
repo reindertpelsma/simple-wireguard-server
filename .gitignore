@@ -1,0 +1,14 @@
+*.log
+uwgkm
+uwgsocks-ui
+dist/
+frontend/dist
+frontend/node_modules
+*.o
+*.out
+*.swp
+*.key
+*.db
+*.crt
+wgui_secrets.json
+uwg_canonical.yaml
