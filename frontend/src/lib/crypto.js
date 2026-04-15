@@ -16,6 +16,16 @@ async function sha256(message) {
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+function fromHex(str) {
+  return new Uint8Array(str.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+}
+
+async function deriveClientKey(nonceHex) {
+  const material = new TextEncoder().encode(`uwgsocks-ui:${nonceHex}`);
+  const digest = await crypto.subtle.digest('SHA-256', material);
+  return new Uint8Array(digest);
+}
+
 export async function generateKeyPair() {
   const { secretKey, publicKey } = x25519.keygen();
   return {
@@ -31,8 +41,8 @@ export async function getPublicKey(privateKeyBase64) {
 
 export async function encryptPrivateKey(privateKeyBase64, nonceHex, aesKeyHex) {
   const privKeyU8 = fromBase64(privateKeyBase64);
-  const nonceU8 = new Uint8Array(nonceHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
-  const aesKeyU8 = new Uint8Array(aesKeyHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+  const nonceU8 = fromHex(nonceHex);
+  const aesKeyU8 = aesKeyHex ? fromHex(aesKeyHex) : await deriveClientKey(nonceHex);
 
   const key = await crypto.subtle.importKey(
     'raw',
@@ -48,13 +58,24 @@ export async function encryptPrivateKey(privateKeyBase64, nonceHex, aesKeyHex) {
     privKeyU8
   );
 
-  return toBase64(new Uint8Array(encrypted));
+  const encoded = toBase64(new Uint8Array(encrypted));
+  return aesKeyHex ? encoded : `v2:${encoded}`;
 }
 
 export async function decryptPrivateKey(encryptedBase64, nonceHex, aesKeyHex) {
-  const encryptedU8 = fromBase64(encryptedBase64);
-  const nonceU8 = new Uint8Array(nonceHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
-  const aesKeyU8 = new Uint8Array(aesKeyHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+  const isClientDerived = encryptedBase64.startsWith('v2:');
+  const payload = isClientDerived ? encryptedBase64.slice(3) : encryptedBase64;
+  const encryptedU8 = fromBase64(payload);
+  const nonceU8 = fromHex(nonceHex);
+  const aesKeyU8 = isClientDerived
+    ? await deriveClientKey(nonceHex)
+    : aesKeyHex
+      ? fromHex(aesKeyHex)
+      : null;
+
+  if (!aesKeyU8) {
+    throw new Error('Legacy encrypted key requires a server-derived nonce helper.');
+  }
 
   const key = await crypto.subtle.importKey(
     'raw',

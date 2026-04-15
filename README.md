@@ -14,11 +14,12 @@ Build a secure, rootless SD-WAN or VPN exit node in seconds.
    ```bash
    ./uwgsocks-ui -listen 0.0.0.0:8080
    ```
+   On the very first startup, the server now prints a random admin password and generates a bootstrap WireGuard client config unless you disable it with `-generate-config=false`.
 3. **Run with TURN (NAT Traversal):**
    ```bash
    ./uwgsocks-ui -turn-server my-turn.com:3478 -turn-user user -turn-pass pass
    ```
-4. **Login:** Open `http://localhost:8080` (admin/admin).
+4. **Login:** Open `http://localhost:8080` and sign in with `admin` plus the password printed in the terminal.
 
 ## Key Features
 
@@ -28,7 +29,10 @@ Build a secure, rootless SD-WAN or VPN exit node in seconds.
 - **SD-WAN Ready:** Group peers by user, manage firewall ACLs, and handle multi-user environments.
 - **Dual-Stack IP:** Automatically assigns IPv4 (/32) and IPv6 (/128) addresses to every peer.
 - **Configuration Merging:** Support for merging UI settings with a custom baseline YAML config.
-- **Admin Dashboard:** Real-time metrics, handshakes, data usage, and global setting management.
+- **Admin Dashboard:** Real-time metrics, handshakes, short-term traffic graphs, and global setting management.
+- **Bootstrap Friendly:** First-run random admin credentials plus optional `-generate-config` output for immediate SSH-only bring-up.
+- **Shareable Configs:** Create self-authenticated config links with optional expiry or one-time use; E2E links keep the decrypting nonce in the URL fragment.
+- **Responsive UI:** Mobile-friendly layout with both dark and light themes.
 - **Secure by Default:** Argon2id hashing, encryption at rest for DB fields, and single-port HTTP/HTTPS multiplexing.
 
 ## Advanced Usage
@@ -42,6 +46,7 @@ Detailed technical documentation and API schemas are available in the [docs/](./
 - `-db-type`: Supports `sqlite` (default), `mysql`, and `postgres`.
 - `-dsn`: Database connection string.
 - `-wg-url`: Connect to daemon via Unix socket (default) or HTTP.
+- `-generate-config`: Immediately mint and print a bootstrap WireGuard client config on startup. Defaults to enabled on the first boot.
 
 ## License
 ISC License. See [LICENSE](./LICENSE) for details.

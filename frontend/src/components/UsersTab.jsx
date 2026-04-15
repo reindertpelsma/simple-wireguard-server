@@ -1,27 +1,49 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { Shield, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
 import { api } from '../lib/api';
-import { UserPlus, Trash2, ShieldCheck, Shield } from 'lucide-react';
 
 export default function UsersTab() {
   const [users, setUsers] = useState([]);
   const [newUser, setNewUser] = useState({ username: '', password: '', is_admin: false });
 
-  useEffect(() => { fetchUsers(); }, []);
-
-  const fetchUsers = async () => {
+  async function fetchUsers() {
     try {
       const data = await api.getUsers();
       setUsers(data);
-    } catch (err) { console.error(err); }
-  };
+    } catch (err) {
+      console.error(err);
+    }
+  }
 
-  const handleCreate = async (e) => {
-    e.preventDefault();
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadUsers() {
+      try {
+        const data = await api.getUsers();
+        if (!cancelled) {
+          setUsers(data);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    loadUsers();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleCreate = async (event) => {
+    event.preventDefault();
     try {
       await api.createUser(newUser);
       setNewUser({ username: '', password: '', is_admin: false });
       fetchUsers();
-    } catch (err) { alert(err.message); }
+    } catch (err) {
+      alert(err.message);
+    }
   };
 
   const handleDelete = async (id) => {
@@ -29,78 +51,83 @@ export default function UsersTab() {
     try {
       await api.deleteUser(id);
       fetchUsers();
-    } catch (err) { alert(err.message); }
+    } catch (err) {
+      alert(err.message);
+    }
   };
 
   return (
-    <div className="space-y-8">
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-        <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
-          <UserPlus size={20} className="text-purple-500" /> Add New User
-        </h3>
-        <form onSubmit={handleCreate} className="flex flex-wrap gap-4 items-end">
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">Username</label>
-            <input
-              type="text"
-              required
-              className="bg-gray-800 border border-gray-700 rounded px-3 py-2 outline-none"
-              value={newUser.username}
-              onChange={e => setNewUser({...newUser, username: e.target.value})}
-            />
+    <div className="space-y-6">
+      <section className="panel p-6">
+        <div className="mb-6 flex items-center gap-3">
+          <div className="brand-badge">
+            <UserPlus size={18} />
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Password</label>
-            <input
-              type="password"
-              required
-              className="bg-gray-800 border border-gray-700 rounded px-3 py-2 outline-none"
-              value={newUser.password}
-              onChange={e => setNewUser({...newUser, password: e.target.value})}
-            />
+            <span className="eyebrow">Account Management</span>
+            <h3 className="text-2xl font-black tracking-tight">Add a user</h3>
           </div>
-          <label className="flex items-center gap-2 bg-gray-800 border border-gray-700 rounded px-3 py-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={newUser.is_admin}
-              onChange={e => setNewUser({...newUser, is_admin: e.target.checked})}
-            />
-            <span className="text-sm">Admin</span>
+        </div>
+
+        <form onSubmit={handleCreate} className="grid gap-4 md:grid-cols-[1fr_1fr_auto_auto] md:items-end">
+          <div className="space-y-2">
+            <label className="field-label">Username</label>
+            <input className="input-field" required value={newUser.username} onChange={(event) => setNewUser({ ...newUser, username: event.target.value })} />
+          </div>
+          <div className="space-y-2">
+            <label className="field-label">Password</label>
+            <input className="input-field" required type="password" value={newUser.password} onChange={(event) => setNewUser({ ...newUser, password: event.target.value })} />
+          </div>
+          <label className="flex items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface-soft)] px-4 py-3 text-sm font-medium">
+            <input type="checkbox" checked={newUser.is_admin} onChange={(event) => setNewUser({ ...newUser, is_admin: event.target.checked })} />
+            <span>Admin</span>
           </label>
-          <button type="submit" className="bg-purple-600 hover:bg-purple-700 px-6 py-2 rounded font-bold">
-            Create
+          <button type="submit" className="primary-button justify-center">
+            <UserPlus size={16} />
+            <span>Create</span>
           </button>
         </form>
-      </div>
+      </section>
 
-      <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-        <table className="w-full text-left">
+      <section className="table-shell">
+        <table>
           <thead>
-            <tr className="bg-gray-800 text-gray-400 text-sm">
-              <th className="px-6 py-3">User</th>
-              <th className="px-6 py-3">Role</th>
-              <th className="px-6 py-3">Actions</th>
+            <tr>
+              <th>User</th>
+              <th>Role</th>
+              <th>Created</th>
+              <th></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-800 text-sm">
-            {users.map(u => (
-              <tr key={u.id}>
-                <td className="px-6 py-4 font-medium">{u.username}</td>
-                <td className="px-6 py-4">
-                  {u.is_admin ? (
-                    <span className="flex items-center gap-1 text-purple-400 font-bold"><ShieldCheck size={14}/> Admin</span>
+          <tbody>
+            {users.map((user) => (
+              <tr key={user.id}>
+                <td className="font-semibold">{user.username}</td>
+                <td>
+                  {user.is_admin ? (
+                    <span className="status-chip">
+                      <ShieldCheck size={13} />
+                      Admin
+                    </span>
                   ) : (
-                    <span className="flex items-center gap-1 text-gray-400"><Shield size={14}/> User</span>
+                    <span className="status-chip status-chip-muted">
+                      <Shield size={13} />
+                      User
+                    </span>
                   )}
                 </td>
-                <td className="px-6 py-4">
-                  <button onClick={() => handleDelete(u.id)} className="text-gray-500 hover:text-red-500"><Trash2 size={16}/></button>
+                <td>{new Date(user.created_at).toLocaleString()}</td>
+                <td className="text-right">
+                  <button type="button" onClick={() => handleDelete(user.id)} className="ghost-button ghost-button-danger">
+                    <Trash2 size={16} />
+                    <span>Delete</span>
+                  </button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-      </div>
+      </section>
     </div>
   );
 }

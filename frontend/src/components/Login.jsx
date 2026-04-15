@@ -1,17 +1,19 @@
 import { useState } from 'react';
+import { Loader2, Shield } from 'lucide-react';
 import { api } from '../lib/api';
-import { Shield, Loader2 } from 'lucide-react';
+import ThemeToggle from './ThemeToggle';
 
-export default function Login({ onLogin }) {
+export default function Login({ theme = 'light', onToggleTheme = () => {}, onLogin }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async (event) => {
+    event.preventDefault();
     setLoading(true);
     setError('');
+
     try {
       const { token } = await api.login(username, password);
       localStorage.setItem('token', token);
@@ -24,61 +26,87 @@ export default function Login({ onLogin }) {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-950 px-4">
-      <div className="max-w-md w-full space-y-8 p-8 bg-gray-900 rounded-2xl border border-gray-800 shadow-xl">
-        <div className="text-center">
-          <div className="flex justify-center">
-            <Shield className="h-12 w-12 text-purple-500" />
-          </div>
-          <h2 className="mt-6 text-3xl font-extrabold text-white">
-            WireGuard Manager
-          </h2>
-          <p className="mt-2 text-sm text-gray-400">
-            Sign in to manage your devices
-          </p>
+    <div className="app-shell flex min-h-screen flex-col px-4 py-6 sm:px-6">
+      <div className="mx-auto flex w-full max-w-6xl justify-end">
+        <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+      </div>
+
+      <div className="mx-auto flex w-full max-w-6xl flex-1 items-center py-8">
+        <div className="grid w-full gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+          <section className="hero-panel">
+            <span className="eyebrow">uwgsocks-ui</span>
+            <h1 className="text-4xl font-black tracking-tight sm:text-5xl">
+              Rootless WireGuard management that still feels operationally sharp.
+            </h1>
+            <p className="max-w-2xl text-base text-[var(--muted)] sm:text-lg">
+              Bootstrap an admin account, generate your first client config from the server process, and manage peer traffic, ACLs, and shared config links without leaving the browser.
+            </p>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="stat-tile">
+                <span className="stat-label">Bootstrap</span>
+                <strong>Random admin password on first start</strong>
+              </div>
+              <div className="stat-tile">
+                <span className="stat-label">Observe</span>
+                <strong>Live traffic graphs from daemon status</strong>
+              </div>
+              <div className="stat-tile">
+                <span className="stat-label">Share</span>
+                <strong>Time-bound `.conf` links with fragment secrets</strong>
+              </div>
+            </div>
+          </section>
+
+          <section className="panel p-6 sm:p-8">
+            <div className="mb-6 flex items-center gap-3">
+              <div className="brand-badge">
+                <Shield size={22} />
+              </div>
+              <div>
+                <h2 className="text-2xl font-black tracking-tight">Sign in</h2>
+                <p className="text-sm text-[var(--muted)]">Use the admin password printed on first startup, or an account you created later.</p>
+              </div>
+            </div>
+
+            <form className="space-y-5" onSubmit={handleSubmit} role="form">
+              <div className="space-y-2">
+                <label className="field-label">Username</label>
+                <input
+                  type="text"
+                  required
+                  className="input-field"
+                  placeholder="admin"
+                  value={username}
+                  onChange={(event) => setUsername(event.target.value)}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="field-label">Password</label>
+                <input
+                  type="password"
+                  required
+                  className="input-field"
+                  placeholder="••••••••••••"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+              </div>
+
+              {error && (
+                <div className="error-banner">
+                  {error}
+                </div>
+              )}
+
+              <button type="submit" disabled={loading} className="primary-button w-full justify-center">
+                {loading ? <Loader2 className="animate-spin" size={18} /> : null}
+                <span>{loading ? 'Signing in…' : 'Enter dashboard'}</span>
+              </button>
+            </form>
+          </section>
         </div>
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit} role="form">
-          <div className="rounded-md shadow-sm space-y-4">
-            <div>
-              <label className="text-sm font-medium text-gray-300">Username</label>
-              <input
-                type="text"
-                required
-                className="appearance-none relative block w-full px-3 py-2 border border-gray-700 bg-gray-800 text-white rounded-lg focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                placeholder="Admin"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="text-sm font-medium text-gray-300">Password</label>
-              <input
-                type="password"
-                required
-                className="appearance-none relative block w-full px-3 py-2 border border-gray-700 bg-gray-800 text-white rounded-lg focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </div>
-          </div>
-
-          {error && (
-            <div className="text-red-500 text-sm text-center">
-              {error}
-            </div>
-          )}
-
-          <div>
-            <button
-              type="submit"
-              disabled={loading}
-              className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 disabled:opacity-50"
-            >
-              {loading ? <Loader2 className="animate-spin h-5 w-5" /> : 'Sign in'}
-            </button>
-          </div>
-        </form>
       </div>
     </div>
   );

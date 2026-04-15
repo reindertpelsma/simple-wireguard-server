@@ -1,19 +1,26 @@
 const API_BASE = ''; // Same origin
 
 export async function request(path, options = {}) {
-  const token = localStorage.getItem('token');
+  const {
+    auth = true,
+    redirectOnAuth = true,
+    headers: extraHeaders,
+    ...fetchOptions
+  } = options;
+
+  const token = auth ? localStorage.getItem('token') : null;
   const headers = {
     'Content-Type': 'application/json',
     ...(token && { 'Authorization': `Bearer ${token}` }),
-    ...options.headers,
+    ...extraHeaders,
   };
 
   const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
+    ...fetchOptions,
     headers,
   });
 
-  if (response.status === 401) {
+  if (response.status === 401 && redirectOnAuth) {
     localStorage.removeItem('token');
     window.location.href = '/login';
     throw new Error('Unauthorized');
@@ -53,13 +60,14 @@ export const api = {
 
   getPeerPrivate: (id, nonceHash) => 
     request(`/api/peers/${id}/private`, {
-      headers: { 'X-Nonce-Hash': nonceHash },
+      headers: nonceHash ? { 'X-Nonce-Hash': nonceHash } : {},
     }),
 
   getHMACNonce: (nonce) => 
     request(`/api/auth/hmac-nonce?nonce=${nonce}`),
 
   getPublicConfig: () => request('/api/config/public'),
+  getAdminConfig: () => request('/api/admin/config'),
 
   // Peer Updates
   updatePeer: (id, data) => 
@@ -101,5 +109,18 @@ export const api = {
     request('/api/admin/config', {
       method: 'POST',
       body: JSON.stringify(data),
+    }),
+
+  createShareLink: (id, data) =>
+    request(`/api/peers/${id}/share-links`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  getSharedConfig: (token, nonceHash) =>
+    request(`/api/share/${encodeURIComponent(token)}`, {
+      auth: false,
+      redirectOnAuth: false,
+      headers: nonceHash ? { 'X-Nonce-Hash': nonceHash } : {},
     }),
 };

@@ -17,8 +17,8 @@ describe('Login Component', () => {
 
   it('renders login form', () => {
     render(<Login onLogin={() => {}} />);
-    expect(screen.getByText(/WireGuard Manager/i)).toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/Admin/i)).toBeInTheDocument();
+    expect(screen.getByText(/Rootless WireGuard management/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/admin/i)).toBeInTheDocument();
   });
 
   it('calls onLogin on successful submit', async () => {
@@ -27,16 +27,9 @@ describe('Login Component', () => {
     
     render(<Login onLogin={onLogin} />);
     
-    fireEvent.change(screen.getByPlaceholderText(/Admin/i), { target: { value: 'admin' } });
-    fireEvent.change(screen.getByPlaceholderText(/••••••••/i), { target: { value: 'admin' } });
-    
-    // Use submit on the form
-    const form = screen.getByRole('form', { hidden: true }); // Need to add role="form" or use container
-    if (!form) {
-        fireEvent.click(screen.getByRole('button', { name: /Sign in/i }));
-    } else {
-        fireEvent.submit(form);
-    }
+    fireEvent.change(screen.getByPlaceholderText(/admin/i), { target: { value: 'admin' } });
+    fireEvent.change(screen.getByPlaceholderText(/••••••••••••/i), { target: { value: 'admin' } });
+    fireEvent.submit(screen.getByRole('form'));
     
     await waitFor(() => expect(onLogin).toHaveBeenCalled());
     expect(localStorage.getItem('token')).toBe('test-token');

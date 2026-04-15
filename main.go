@@ -15,10 +15,9 @@ import (
 	"crypto/x509/pkix"
 	"embed"
 	"encoding/base64"
-	"encoding/json"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
-	"path/filepath"
 	"errors"
 	"flag"
 	"fmt"
@@ -31,6 +30,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -51,32 +51,34 @@ var frontendFS embed.FS
 
 // --- Configuration ---
 var (
-	dbDSN          = flag.String("dsn", "wgui.db", "Database DSN")
-	dbType         = flag.String("db-type", "sqlite", "Database type: sqlite, mysql, postgres")
-	listenAddr     = flag.String("listen", "0.0.0.0:8080", "HTTP/HTTPS listen address")
-	uwgsocksURL    = flag.String("wg-url", "unix://uwgsocks.sock", "uwgsocks API URL")
-	uwgsocksToken  = flag.String("wg-token", "", "uwgsocks API Token")
-	manageDaemon   = flag.Bool("manage", true, "Start and manage uwgsocks daemon")
-	daemonPath     = flag.String("daemon-path", "", "Path to uwgsocks binary (auto-detected if empty)")
-	tlsCert        = flag.String("tls-cert", "", "Path to TLS cert")
-	tlsKey         = flag.String("tls-key", "", "Path to TLS key")
-	
+	dbDSN         = flag.String("dsn", "wgui.db", "Database DSN")
+	dbType        = flag.String("db-type", "sqlite", "Database type: sqlite, mysql, postgres")
+	listenAddr    = flag.String("listen", "0.0.0.0:8080", "HTTP/HTTPS listen address")
+	uwgsocksURL   = flag.String("wg-url", "unix://uwgsocks.sock", "uwgsocks API URL")
+	uwgsocksToken = flag.String("wg-token", "", "uwgsocks API Token")
+	manageDaemon  = flag.Bool("manage", true, "Start and manage uwgsocks daemon")
+	daemonPath    = flag.String("daemon-path", "", "Path to uwgsocks binary (auto-detected if empty)")
+	tlsCert       = flag.String("tls-cert", "", "Path to TLS cert")
+	tlsKey        = flag.String("tls-key", "", "Path to TLS key")
+
 	// TURN settings from CLI
-	turnServer     = flag.String("turn-server", "", "TURN server (host:port)")
-	turnUser       = flag.String("turn-user", "", "TURN username")
-	turnPass       = flag.String("turn-pass", "", "TURN password")
-	turnRealm      = flag.String("turn-realm", "", "TURN realm")
+	turnServer = flag.String("turn-server", "", "TURN server (host:port)")
+	turnUser   = flag.String("turn-user", "", "TURN username")
+	turnPass   = flag.String("turn-pass", "", "TURN password")
+	turnRealm  = flag.String("turn-realm", "", "TURN realm")
 
 	baselineConfig = flag.String("baseline-config", "", "Path to baseline YAML configuration to merge with UI settings")
+	generateConfig = flag.Bool("generate-config", false, "Generate and print a bootstrap WireGuard client config on startup")
 
-	systemMode     = flag.Bool("system", false, "Use kernel WireGuard (requires root)")
-	autoSystem     = flag.Bool("auto-system", false, "Auto-detect and use kernel WireGuard if possible")
-	dataDir        = flag.String("data-dir", ".", "Directory to store configuration and database files")
+	systemMode = flag.Bool("system", false, "Use kernel WireGuard (requires root)")
+	autoSystem = flag.Bool("auto-system", false, "Auto-detect and use kernel WireGuard if possible")
+	dataDir    = flag.String("data-dir", ".", "Directory to store configuration and database files")
 )
 
 var gdb *gorm.DB
 var mu sync.Mutex
 var hmacSecret = make([]byte, 32)
+var trafficHistory = newTrafficTracker(30 * time.Minute)
 
 // --- Discovery Helpers ---
 
@@ -90,19 +92,31 @@ func resolvePath(name string) string {
 func hasNetAdmin() bool {
 	// Simple check: can we open a netlink socket or create a dummy interface?
 	// Real check would use unix.Capget, but this is a good heuristic.
-	if os.Geteuid() != 0 { return false }
+	if os.Geteuid() != 0 {
+		return false
+	}
 	// Try creating a test link (omitted for brevity, assume root = yes for now)
 	return true
 }
 
 func findDaemon(system bool) string {
-	if *daemonPath != "" { return *daemonPath }
+	if *daemonPath != "" {
+		return *daemonPath
+	}
 	name := "uwgsocks"
-	if system { name = "uwgkm" }
-	
-	if _, err := os.Stat("./" + name); err == nil { return "./" + name }
-	if p, err := exec.LookPath(name); err == nil { return p }
-	if _, err := os.Stat("../" + name); err == nil { return "../" + name }
+	if system {
+		name = "uwgkm"
+	}
+
+	if _, err := os.Stat("./" + name); err == nil {
+		return "./" + name
+	}
+	if p, err := exec.LookPath(name); err == nil {
+		return p
+	}
+	if _, err := os.Stat("../" + name); err == nil {
+		return "../" + name
+	}
 	return "./" + name
 }
 
@@ -122,46 +136,48 @@ func discoverMTU() int {
 
 // --- GORM Models ---
 type User struct {
-	ID           uint           `gorm:"primaryKey" json:"id"`
-	Username     string         `gorm:"uniqueIndex;not null" json:"username"`
-	PasswordHash string         `json:"-"`
-	Token        string         `gorm:"uniqueIndex" json:"token,omitempty"`
-	IsAdmin      bool           `gorm:"default:false" json:"is_admin"`
-	MaxConfigs   int            `gorm:"default:10" json:"max_configs"`
-	TOTPSecret   string         `json:"-"`
-	TOTPEnabled  bool           `gorm:"default:false" json:"totp_enabled"`
-	OIDCProvider string         `json:"oidc_provider,omitempty"`
-	OIDCSubject  *string        `gorm:"uniqueIndex" json:"oidc_subject,omitempty"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
-	Peers        []Peer         `gorm:"foreignKey:UserID" json:"peers,omitempty"`
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	Username     string    `gorm:"uniqueIndex;not null" json:"username"`
+	PasswordHash string    `json:"-"`
+	Token        string    `gorm:"uniqueIndex" json:"token,omitempty"`
+	IsAdmin      bool      `gorm:"default:false" json:"is_admin"`
+	MaxConfigs   int       `gorm:"default:10" json:"max_configs"`
+	TOTPSecret   string    `json:"-"`
+	TOTPEnabled  bool      `gorm:"default:false" json:"totp_enabled"`
+	OIDCProvider string    `json:"oidc_provider,omitempty"`
+	OIDCSubject  *string   `gorm:"uniqueIndex" json:"oidc_subject,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Peers        []Peer    `gorm:"foreignKey:UserID" json:"peers,omitempty"`
 }
 
 type Peer struct {
-	ID                  uint           `gorm:"primaryKey" json:"id"`
-	UserID              uint           `gorm:"not null" json:"user_id"`
-	User                User           `gorm:"foreignKey:UserID" json:"-"`
-	Username            string         `gorm:"-" json:"username,omitempty"`
-	Name                string         `gorm:"not null" json:"name"`
-	AssignedIPs         string         `gorm:"not null" json:"assigned_ips"`
-	Keepalive           int            `gorm:"default:25" json:"keepalive"`
-	EndpointIP          string         `json:"endpoint_ip,omitempty"`
-	PublicKey           string         `gorm:"uniqueIndex;not null" json:"public_key"`
-	NonceHash           string         `json:"nonce_hash,omitempty"`
-	PresharedKey        string         `json:"preshared_key,omitempty"`
-	EncryptedPrivateKey string         `json:"encrypted_private_key,omitempty"`
-	PrivateKey          string         `json:"-"` // Only populated if IsE2E is false, stored encrypted at rest
-	IsE2E               bool           `gorm:"default:true" json:"is_e2e"`
-	Enabled             bool           `gorm:"default:true" json:"enabled"`
-	IsManualKey         bool           `gorm:"default:false" json:"is_manual_key"`
-	IsOwner             bool           `gorm:"-" json:"is_owner"`
-	StaticEndpoint      string         `json:"static_endpoint,omitempty"`
-	ExpiresAt           *time.Time     `json:"expires_at,omitempty"`
+	ID                  uint       `gorm:"primaryKey" json:"id"`
+	UserID              uint       `gorm:"not null" json:"user_id"`
+	User                User       `gorm:"foreignKey:UserID" json:"-"`
+	Username            string     `gorm:"-" json:"username,omitempty"`
+	Name                string     `gorm:"not null" json:"name"`
+	AssignedIPs         string     `gorm:"not null" json:"assigned_ips"`
+	Keepalive           int        `gorm:"default:0" json:"keepalive"`
+	EndpointIP          string     `json:"endpoint_ip,omitempty"`
+	PublicKey           string     `gorm:"uniqueIndex;not null" json:"public_key"`
+	NonceHash           string     `json:"nonce_hash,omitempty"`
+	PresharedKey        string     `json:"preshared_key,omitempty"`
+	EncryptedPrivateKey string     `json:"encrypted_private_key,omitempty"`
+	PrivateKey          string     `json:"-"` // Only populated if IsE2E is false, stored encrypted at rest
+	IsE2E               bool       `gorm:"default:false" json:"is_e2e"`
+	Enabled             bool       `gorm:"default:true" json:"enabled"`
+	IsManualKey         bool       `gorm:"default:false" json:"is_manual_key"`
+	IsOwner             bool       `gorm:"-" json:"is_owner"`
+	StaticEndpoint      string     `json:"static_endpoint,omitempty"`
+	ExpiresAt           *time.Time `json:"expires_at,omitempty"`
 	// Stats from uwgsocks (volatile)
-	LastHandshakeTime   string         `gorm:"-" json:"last_handshake_time,omitempty"`
-	TransmitBytes       uint64         `gorm:"-" json:"transmit_bytes"`
-	ReceiveBytes        uint64         `gorm:"-" json:"receive_bytes"`
-	HasHandshake        bool           `gorm:"-" json:"has_handshake"`
+	LastHandshakeTime     string             `gorm:"-" json:"last_handshake_time,omitempty"`
+	TransmitBytes         uint64             `gorm:"-" json:"transmit_bytes"`
+	ReceiveBytes          uint64             `gorm:"-" json:"receive_bytes"`
+	HasHandshake          bool               `gorm:"-" json:"has_handshake"`
+	HasPrivateKeyMaterial bool               `gorm:"-" json:"has_private_key_material"`
+	TrafficHistory        []PeerTrafficPoint `gorm:"-" json:"traffic_history,omitempty"`
 }
 
 type GlobalConfig struct {
@@ -198,7 +214,9 @@ func startHTTPServer(mux *http.ServeMux) {
 
 	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}}
 	l, err := net.Listen("tcp", *listenAddr)
-	if err != nil { log.Fatal(err) }
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	log.Printf("UI Backend listening on %s (HTTP/HTTPS Multiplexed)", *listenAddr)
 
@@ -215,14 +233,16 @@ func startHTTPServer(mux *http.ServeMux) {
 
 	for {
 		conn, err := l.Accept()
-		if err != nil { continue }
-		
+		if err != nil {
+			continue
+		}
+
 		go func(c net.Conn) {
 			buf := make([]byte, 1)
 			c.SetReadDeadline(time.Now().Add(2 * time.Second))
 			n, err := c.Read(buf)
 			c.SetReadDeadline(time.Time{})
-			
+
 			if err != nil {
 				c.Close()
 				return
@@ -252,17 +272,20 @@ func newInternalListener(addr net.Addr) *internalListener {
 
 func (l *internalListener) Accept() (net.Conn, error) {
 	c, ok := <-l.conns
-	if !ok { return nil, io.EOF }
+	if !ok {
+		return nil, io.EOF
+	}
 	return c, nil
 }
 
-func (l *internalListener) Close() error { return nil }
+func (l *internalListener) Close() error   { return nil }
 func (l *internalListener) Addr() net.Addr { return l.addr }
 
 type peekedConn struct {
 	net.Conn
 	peeked []byte
 }
+
 func (c *peekedConn) Read(b []byte) (int, error) {
 	if len(c.peeked) > 0 {
 		n := copy(b, c.peeked)
@@ -281,15 +304,17 @@ func ensureSelfSignedCert() (string, string) {
 	}
 
 	log.Println("Generating self-signed TLS certificate...")
-	
+
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil { log.Fatalf("rsa.GenerateKey: %v", err) }
-	
+	if err != nil {
+		log.Fatalf("rsa.GenerateKey: %v", err)
+	}
+
 	template := x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{Organization: []string{"WireGuard SD-WAN"}},
-		NotBefore: time.Now(),
-		NotAfter:  time.Now().Add(365 * 24 * time.Hour),
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{Organization: []string{"WireGuard SD-WAN"}},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
@@ -298,16 +323,26 @@ func ensureSelfSignedCert() (string, string) {
 	}
 
 	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
-	if err != nil { log.Fatalf("x509.CreateCertificate: %v", err) }
+	if err != nil {
+		log.Fatalf("x509.CreateCertificate: %v", err)
+	}
 
 	certOut, err := os.Create(certFile)
-	if err != nil { log.Fatalf("os.Create(certOut): %v", err) }
-	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil { log.Fatalf("pem.Encode(certOut): %v", err) }
+	if err != nil {
+		log.Fatalf("os.Create(certOut): %v", err)
+	}
+	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
+		log.Fatalf("pem.Encode(certOut): %v", err)
+	}
 	certOut.Close()
 
 	keyOut, err := os.OpenFile(keyFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil { log.Fatalf("os.OpenFile(keyFile): %v", err) }
-	if err := pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)}); err != nil { log.Fatalf("pem.Encode(keyOut): %v", err) }
+	if err != nil {
+		log.Fatalf("os.OpenFile(keyFile): %v", err)
+	}
+	if err := pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)}); err != nil {
+		log.Fatalf("pem.Encode(keyOut): %v", err)
+	}
 	keyOut.Close()
 
 	return certFile, keyFile
@@ -335,21 +370,22 @@ func main() {
 	rand.Read(hmacSecret)
 	initDB()
 	initGlobalSettings()
-	
+	maybeGenerateBootstrapConfig()
+
 	if os.Getenv("SYSTEM_MODE") == "true" {
 		*systemMode = true
 		log.Println("SYSTEM_MODE=true environment variable found, enabling system WireGuard mode.")
 	}
 
 	*daemonPath = findDaemon(*systemMode)
-	
+
 	if *manageDaemon {
 		// Set MTU if not manually overridden in DB already
 		if getConfig("global_mtu") == "1420" {
 			mtu := discoverMTU()
 			gdb.Model(&GlobalConfig{}).Where("key = ?", "global_mtu").Update("value", strconv.Itoa(mtu))
 		}
-		
+
 		generateCanonicalYAML()
 		startDaemon()
 	}
@@ -372,11 +408,12 @@ func main() {
 	}()
 
 	mux := http.NewServeMux()
-	
+
 	// Auth
 	mux.HandleFunc("POST /api/login", handleLogin)
 	mux.HandleFunc("GET /api/auth/hmac-nonce", authMiddleware(handleHMACNonce))
-	
+	mux.HandleFunc("GET /api/share/{token}", handleGetSharedConfig)
+
 	// Peer Management
 	mux.HandleFunc("GET /api/peers", authMiddleware(handleGetPeers))
 	mux.HandleFunc("POST /api/peers", authMiddleware(handleCreatePeer))
@@ -384,7 +421,8 @@ func main() {
 	mux.HandleFunc("DELETE /api/peers/{id}", authMiddleware(handleDeletePeer))
 	mux.HandleFunc("GET /api/peers/{id}/private", authMiddleware(handleGetPeerPrivate))
 	mux.HandleFunc("POST /api/peers/{id}/ping", authMiddleware(handlePingPeer))
-	
+	mux.HandleFunc("POST /api/peers/{id}/share-links", authMiddleware(handleCreateShareLink))
+
 	// Admin - Users
 	mux.HandleFunc("GET /api/admin/users", authMiddleware(adminMiddleware(handleGetUsers)))
 	mux.HandleFunc("POST /api/admin/users", authMiddleware(adminMiddleware(handleCreateUser)))
@@ -396,6 +434,7 @@ func main() {
 	mux.HandleFunc("DELETE /api/admin/acls/{id}", authMiddleware(adminMiddleware(handleDeleteACL)))
 
 	// Admin - Config
+	mux.HandleFunc("GET /api/admin/config", authMiddleware(adminMiddleware(handleGetAdminConfig)))
 	mux.HandleFunc("POST /api/admin/config", authMiddleware(adminMiddleware(handleUpdateGlobalConfig)))
 	mux.HandleFunc("GET /api/config/public", authMiddleware(handleGetPublicConfig))
 	mux.HandleFunc("GET /api/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
@@ -421,7 +460,9 @@ func main() {
 		isLocal := strings.HasPrefix(r.RemoteAddr, "127.0.0.1") || strings.HasPrefix(r.RemoteAddr, "[::1]")
 		if !isLocal && r.TLS == nil && !strings.HasPrefix(r.URL.Path, "/api") {
 			host, _, _ := net.SplitHostPort(r.Host)
-			if host == "" { host = r.Host }
+			if host == "" {
+				host = r.Host
+			}
 			http.Redirect(w, r, "https://"+host+r.RequestURI, http.StatusMovedPermanently)
 			return
 		}
@@ -449,7 +490,7 @@ func main() {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		io.Copy(w, index)
 	})
-	
+
 	startHTTPServer(mux)
 }
 
@@ -476,25 +517,12 @@ func initDB() {
 	}
 
 	// Auto Migration
-	err = gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{})
+	err = gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{})
 	if err != nil {
 		log.Fatalf("Failed to migrate database: %v", err)
 	}
 
-	// Create default admin if no users exist
-	var count int64
-	gdb.Model(&User{}).Count(&count)
-	if count == 0 {
-		hash, _ := bcrypt.GenerateFromPassword([]byte("admin"), bcrypt.DefaultCost)
-		admin := User{
-			Username:     "admin",
-			PasswordHash: string(hash),
-			IsAdmin:      true,
-			MaxConfigs:   999,
-		}
-		gdb.Create(&admin)
-		log.Println("Created default admin user: admin / admin")
-	}
+	ensureInitialAdminUser()
 }
 
 type SecretsConfig struct {
@@ -516,10 +544,10 @@ func initGlobalSettings() {
 		key, _ := wgtypes.GeneratePrivateKey()
 		secrets.ServerPrivateKey = key.String()
 		secrets.ServerPublicKey = key.PublicKey().String()
-		
+
 		rand.Read(hmacSecret)
 		secrets.HMACSecretHex = hex.EncodeToString(hmacSecret)
-		
+
 		d, _ := json.MarshalIndent(secrets, "", "  ")
 		os.WriteFile(secretsPath, d, 0600)
 		log.Printf("Generated new server keys and HMAC secret in %s", secretsPath)
@@ -619,9 +647,9 @@ func hashPassword(password string) (string, error) {
 	salt := make([]byte, 16)
 	rand.Read(salt)
 	hash := argon2.IDKey([]byte(password), salt, 1, 64*1024, 4, 32)
-	
-	res := fmt.Sprintf("$argon2id$v=19$m=65536,t=1,p=4$%s$%s", 
-		base64.RawStdEncoding.EncodeToString(salt), 
+
+	res := fmt.Sprintf("$argon2id$v=19$m=65536,t=1,p=4$%s$%s",
+		base64.RawStdEncoding.EncodeToString(salt),
 		base64.RawStdEncoding.EncodeToString(hash))
 	return res, nil
 }
@@ -629,15 +657,17 @@ func hashPassword(password string) (string, error) {
 func verifyPassword(password, encodedHash string) bool {
 	if strings.HasPrefix(encodedHash, "$argon2id$") {
 		vals := strings.Split(encodedHash, "$")
-		if len(vals) != 6 { return false }
+		if len(vals) != 6 {
+			return false
+		}
 		salt, _ := base64.RawStdEncoding.DecodeString(vals[4])
 		hash, _ := base64.RawStdEncoding.DecodeString(vals[5])
-		
+
 		// Parse m, t, p
 		var m, t uint32
 		var p uint8
 		fmt.Sscanf(vals[3], "m=%d,t=%d,p=%d", &m, &t, &p)
-		
+
 		comp := argon2.IDKey([]byte(password), salt, t, m, p, uint32(len(hash)))
 		return hmac.Equal(hash, comp)
 	}
@@ -652,7 +682,9 @@ func getDBEncryptionKey() []byte {
 }
 
 func encryptAtRest(plain string) string {
-	if plain == "" { return "" }
+	if plain == "" {
+		return ""
+	}
 	key := getDBEncryptionKey()
 	block, _ := aes.NewCipher(key)
 	gcm, _ := cipher.NewGCM(block)
@@ -663,17 +695,25 @@ func encryptAtRest(plain string) string {
 }
 
 func decryptAtRest(cipherB64 string) string {
-	if cipherB64 == "" { return "" }
+	if cipherB64 == "" {
+		return ""
+	}
 	data, err := base64.StdEncoding.DecodeString(cipherB64)
-	if err != nil { return "" }
+	if err != nil {
+		return ""
+	}
 	key := getDBEncryptionKey()
 	block, _ := aes.NewCipher(key)
 	gcm, _ := cipher.NewGCM(block)
 	nonceSize := gcm.NonceSize()
-	if len(data) < nonceSize { return "" }
+	if len(data) < nonceSize {
+		return ""
+	}
 	nonce, cipherText := data[:nonceSize], data[nonceSize:]
 	plain, err := gcm.Open(nil, nonce, cipherText, nil)
-	if err != nil { return "" }
+	if err != nil {
+		return ""
+	}
 	return string(plain)
 }
 
@@ -717,7 +757,7 @@ func handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 	isAdmin := r.Header.Get("X-Is-Admin") == "true"
 	var userID uint
 	fmt.Sscanf(userIDStr, "%d", &userID)
-	
+
 	var user User
 	gdb.First(&user, userID)
 
@@ -745,7 +785,9 @@ func handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	e2eEnabled := getConfig("e2e_encryption_enabled") == "true"
-	if isAdmin { e2eEnabled = req.EncryptedPrivateKey != "" } // Admin can choose based on input
+	if isAdmin {
+		e2eEnabled = req.EncryptedPrivateKey != ""
+	} // Admin can choose based on input
 
 	var serverPriv, serverPub string
 	if !e2eEnabled && !req.IsManualKey {
@@ -758,10 +800,6 @@ func handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 	if getConfig("allow_custom_private_key") == "false" && req.IsManualKey && !isAdmin {
 		http.Error(w, "Manual private keys are disabled by operator", http.StatusForbidden)
 		return
-	}
-
-	if req.Keepalive == 0 {
-		req.Keepalive = 25
 	}
 
 	// Determine IP Address
@@ -803,12 +841,17 @@ func handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to save peer (public key must be unique)", http.StatusInternalServerError)
 		return
 	}
-	
+
 	// Sync directly to uwgsocks API
 	pushPeerToDaemon(peer.PublicKey, assignedIP, psk, req.Keepalive, req.StaticEndpoint)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"id": peer.ID, "assigned_ips": assignedIP})
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":                       peer.ID,
+		"assigned_ips":             assignedIP,
+		"public_key":               peer.PublicKey,
+		"has_private_key_material": peerHasPrivateKeyMaterial(peer),
+	})
 }
 
 // Returns Private data ONLY if the correct X-Nonce-Hash is provided
@@ -817,11 +860,6 @@ func handleGetPeerPrivate(w http.ResponseWriter, r *http.Request) {
 	userID := r.Header.Get("X-User-Id")
 	isAdmin := r.Header.Get("X-Is-Admin") == "true"
 	providedHash := r.Header.Get("X-Nonce-Hash")
-
-	if providedHash == "" {
-		http.Error(w, "Missing X-Nonce-Hash header", http.StatusBadRequest)
-		return
-	}
 
 	var peer Peer
 	if err := gdb.First(&peer, id).Error; err != nil {
@@ -835,6 +873,10 @@ func handleGetPeerPrivate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if peer.IsE2E {
+		if providedHash == "" {
+			http.Error(w, "Missing X-Nonce-Hash header", http.StatusBadRequest)
+			return
+		}
 		if providedHash != peer.NonceHash {
 			log.Printf("Hash mismatch for peer %d: expected %s, got %s", peer.ID, peer.NonceHash, providedHash)
 			http.Error(w, "Invalid Nonce Hash. Decryption locked.", http.StatusForbidden)
@@ -847,7 +889,7 @@ func handleGetPeerPrivate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	peer.PresharedKey = decryptAtRest(peer.PresharedKey)
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(peer)
 }
@@ -864,24 +906,36 @@ func handleHMACNonce(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "%x", key)
 }
 
+func fetchDaemonPeerStats() map[string]Peer {
+	statsMap := make(map[string]Peer)
+	resp, err := uwgRequest("GET", "/v1/status", nil)
+	if err != nil {
+		return statsMap
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return statsMap
+	}
+
+	var st struct {
+		Peers []Peer `json:"peers"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
+		return statsMap
+	}
+
+	trafficHistory.Record(st.Peers, time.Now())
+	for _, p := range st.Peers {
+		statsMap[p.PublicKey] = p
+	}
+	return statsMap
+}
+
 func handleGetPeers(w http.ResponseWriter, r *http.Request) {
 	userID := r.Header.Get("X-User-Id")
 	isAdmin := r.Header.Get("X-Is-Admin") == "true"
 
-	// Fetch Stats from uwgsocks
-	statsMap := make(map[string]Peer)
-	resp, err := uwgRequest("GET", "/v1/status", nil)
-	if err == nil {
-		var st struct {
-			Peers []Peer `json:"peers"`
-		}
-		if json.NewDecoder(resp.Body).Decode(&st) == nil {
-			for _, p := range st.Peers {
-				statsMap[p.PublicKey] = p
-			}
-		}
-		resp.Body.Close()
-	}
+	statsMap := fetchDaemonPeerStats()
 
 	pubVisible := getConfig("public_keys_visible") == "true"
 	endVisible := getConfig("endpoints_visible") == "true"
@@ -908,10 +962,14 @@ func handleGetPeers(w http.ResponseWriter, r *http.Request) {
 		// Filter sensitive data
 		isOwner := fmt.Sprint(p.UserID) == userID
 		p.IsOwner = isOwner
-		
+		p.HasPrivateKeyMaterial = peerHasPrivateKeyMaterial(p)
+		p.TrafficHistory = trafficHistory.History(p.PublicKey)
+
 		if !isAdmin && !isOwner {
-			if !pubVisible { p.PublicKey = "" }
-			if !endVisible { 
+			if !pubVisible {
+				p.PublicKey = ""
+			}
+			if !endVisible {
 				p.EndpointIP = ""
 				p.StaticEndpoint = ""
 			}
@@ -939,20 +997,20 @@ func handleDeletePeer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	gdb.Where("peer_id = ?", peer.ID).Delete(&SharedConfigLink{})
 	removePeerFromDaemon(peer.PublicKey)
 	gdb.Delete(&peer)
 	w.WriteHeader(http.StatusOK)
 }
 
 func handleGetPublicConfig(w http.ResponseWriter, r *http.Request) {
-	configs := make(map[string]string)
-	var list []GlobalConfig
-	gdb.Find(&list)
-	for _, c := range list {
-		configs[c.Key] = c.Value
-	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(configs)
+	json.NewEncoder(w).Encode(publicConfigMap())
+}
+
+func handleGetAdminConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(adminConfigMap())
 }
 
 func handleUpdatePeer(w http.ResponseWriter, r *http.Request) {
@@ -981,12 +1039,24 @@ func handleUpdatePeer(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 
-	if req.Name != nil { peer.Name = *req.Name }
-	if req.AssignedIPs != nil && isAdmin { peer.AssignedIPs = *req.AssignedIPs }
-	if req.Keepalive != nil { peer.Keepalive = *req.Keepalive }
-	if req.Enabled != nil { peer.Enabled = *req.Enabled }
-	if req.StaticEndpoint != nil { peer.StaticEndpoint = *req.StaticEndpoint }
-	if req.ExpiresAt != nil { peer.ExpiresAt = req.ExpiresAt }
+	if req.Name != nil {
+		peer.Name = *req.Name
+	}
+	if req.AssignedIPs != nil && isAdmin {
+		peer.AssignedIPs = *req.AssignedIPs
+	}
+	if req.Keepalive != nil {
+		peer.Keepalive = *req.Keepalive
+	}
+	if req.Enabled != nil {
+		peer.Enabled = *req.Enabled
+	}
+	if req.StaticEndpoint != nil {
+		peer.StaticEndpoint = *req.StaticEndpoint
+	}
+	if req.ExpiresAt != nil {
+		peer.ExpiresAt = req.ExpiresAt
+	}
 
 	gdb.Save(&peer)
 
@@ -1014,17 +1084,17 @@ func handlePingPeer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	
+
 	// Use first IP for ping
 	target := strings.Split(peer.AssignedIPs, ",")[0]
 	target, _, _ = strings.Cut(target, "/")
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	
+
 	resp, err := uwgRequestWithContext(ctx, "GET", fmt.Sprintf("/v1/ping?target=%s&count=3", target), nil)
 	if err != nil {
-		http.Error(w, "Ping failed: " + err.Error(), http.StatusBadGateway)
+		http.Error(w, "Ping failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
@@ -1056,9 +1126,11 @@ func uwgRequestWithContext(ctx context.Context, method, path string, body io.Rea
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, targetURL, body)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	if *uwgsocksToken != "" {
-		req.Header.Set("Authorization", "Bearer " + *uwgsocksToken)
+		req.Header.Set("Authorization", "Bearer "+*uwgsocksToken)
 	}
 	return client.Do(req)
 }
@@ -1148,7 +1220,7 @@ func getACLConfig() map[string]interface{} {
 				m["source"] = r.Src
 			}
 			if r.Proto != "" {
-                                m["protocol"] = strings.ToUpper(r.Proto)
+				m["protocol"] = strings.ToUpper(r.Proto)
 			}
 			if r.Dst != "" {
 				m["destination"] = r.Dst
@@ -1206,8 +1278,10 @@ func allocateIP() (string, error) {
 
 	subnetV4 := getConfig("client_subnet_ipv4")
 	prefV4, err := netip.ParsePrefix(subnetV4)
-	if err != nil { return "", fmt.Errorf("v4 subnet: %w", err) }
-	
+	if err != nil {
+		return "", fmt.Errorf("v4 subnet: %w", err)
+	}
+
 	var assignedIPs []string
 	gdb.Model(&Peer{}).Pluck("assigned_ips", &assignedIPs)
 	usedMap := make(map[string]bool)
@@ -1223,9 +1297,13 @@ func allocateIP() (string, error) {
 	addr := prefV4.Addr()
 	for {
 		addr = addr.Next()
-		if !prefV4.Contains(addr) { break }
+		if !prefV4.Contains(addr) {
+			break
+		}
 		// Skip network, gateway (.1), and broadcast (.255)
-		if addr.Is4() && (addr.AsSlice()[3] == 0 || addr.AsSlice()[3] == 1 || addr.AsSlice()[3] == 255) { continue }
+		if addr.Is4() && (addr.AsSlice()[3] == 0 || addr.AsSlice()[3] == 1 || addr.AsSlice()[3] == 255) {
+			continue
+		}
 		if !usedMap[addr.String()] {
 			v4 = addr.String() + "/32"
 			break
@@ -1235,7 +1313,9 @@ func allocateIP() (string, error) {
 	// IPv6: Random Suffix
 	subnetV6 := getConfig("client_subnet_ipv6")
 	prefV6, err := netip.ParsePrefix(subnetV6)
-	if err != nil { return "", fmt.Errorf("v6 subnet: %w", err) }
+	if err != nil {
+		return "", fmt.Errorf("v6 subnet: %w", err)
+	}
 	v6 := ""
 	for i := 0; i < 10; i++ { // Try a few times
 		suffix := make([]byte, 8)
@@ -1249,8 +1329,12 @@ func allocateIP() (string, error) {
 		}
 	}
 
-	if v4 == "" { return "", errors.New("ipv4 subnet exhausted") }
-	if v6 == "" { return v4, nil } // Fallback to v4 only if v6 fails
+	if v4 == "" {
+		return "", errors.New("ipv4 subnet exhausted")
+	}
+	if v6 == "" {
+		return v4, nil
+	} // Fallback to v4 only if v6 fails
 	return v4 + ", " + v6, nil
 }
 
@@ -1266,16 +1350,24 @@ func pushPeerToDaemon(pubKey, ips, psk string, keepalive int, endpoint string) {
 		allowed = append(allowed, strings.TrimSpace(ip))
 	}
 	payload := map[string]interface{}{
-		"public_key":           pubKey,
-		"allowed_ips":          allowed,
-		"persistent_keepalive": keepalive,
+		"public_key":  pubKey,
+		"allowed_ips": allowed,
 	}
-	if psk != "" { payload["preshared_key"] = psk }
-	if endpoint != "" { payload["endpoint"] = endpoint }
+	if keepalive > 0 {
+		payload["persistent_keepalive"] = keepalive
+	}
+	if psk != "" {
+		payload["preshared_key"] = psk
+	}
+	if endpoint != "" {
+		payload["endpoint"] = endpoint
+	}
 
 	b, _ := json.Marshal(payload)
 	resp, err := uwgRequest("POST", "/v1/peers", bytes.NewBuffer(b))
-	if err == nil { resp.Body.Close() }
+	if err == nil {
+		resp.Body.Close()
+	}
 }
 
 func removePeerFromDaemon(pubKey string) {
@@ -1332,9 +1424,9 @@ func generateCanonicalYAML() {
 		"api": map[string]interface{}{
 			"listen": apiListen,
 			"token":  *uwgsocksToken,
-		},		"proxy": map[string]interface{}{
-			"socks5":         "0.0.0.0:" + getConfig("yaml_socks5_port"),
-			"udp_associate":  getConfig("yaml_socks5_udp") == "true",
+		}, "proxy": map[string]interface{}{
+			"socks5":        "0.0.0.0:" + getConfig("yaml_socks5_port"),
+			"udp_associate": getConfig("yaml_socks5_udp") == "true",
 		},
 		"inbound": map[string]interface{}{
 			"transparent": getConfig("yaml_inbound_transparent") == "true",
@@ -1390,7 +1482,7 @@ func startDaemon() {
 		// uwgsocks flags
 		cmd = exec.Command(*daemonPath, "--config", resolvePath("uwg_canonical.yaml"))
 	}
-	
+
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	go func() {

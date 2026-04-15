@@ -1,213 +1,428 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  Activity,
+  Copy,
+  Edit3,
+  Globe,
+  Link2,
+  Loader2,
+  Lock,
+  Power,
+  PowerOff,
+  QrCode,
+  Smartphone,
+  Trash2,
+  User,
+  X,
+} from 'lucide-react';
 import { api } from '../lib/api';
-import { Smartphone, QrCode, Trash2, Activity, Power, PowerOff, Edit3, Loader2, User, Globe, Lock } from 'lucide-react';
+import { formatBytes } from '../lib/config';
+import TrafficSparkline from './TrafficSparkline';
+
+function ShareModal({ peer, onClose }) {
+  const [oneUse, setOneUse] = useState(false);
+  const [expiresAt, setExpiresAt] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [link, setLink] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  const handleCreateLink = async () => {
+    setLoading(true);
+    setError('');
+
+    try {
+      const nonce = localStorage.getItem(`nonce_${peer.public_key}`);
+      const result = await api.createShareLink(peer.id, {
+        one_use: oneUse,
+        expires_at: expiresAt ? new Date(expiresAt).toISOString() : null,
+      });
+
+      const base = `${window.location.origin}/config/${result.token}`;
+      setLink(`${base}${peer.is_e2e && nonce ? `#${nonce}` : ''}`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(link);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  };
+
+  return (
+    <div className="modal-backdrop">
+      <div className="modal-panel">
+        <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-6 py-5">
+          <div className="space-y-2">
+            <span className="eyebrow">Shared Config Link</span>
+            <h2 className="text-2xl font-black tracking-tight">{peer.name}</h2>
+            <p className="text-sm text-[var(--muted)]">
+              The token lives in the URL path. If this device uses browser-side encryption, the decrypting nonce stays in the `#fragment`.
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="ghost-button" aria-label="Close">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="space-y-5 px-6 py-6">
+          <label className="flex items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface-soft)] px-4 py-3 text-sm font-medium">
+            <input type="checkbox" checked={oneUse} onChange={(event) => setOneUse(event.target.checked)} />
+            <span>Allow this link to be used exactly once</span>
+          </label>
+
+          <div className="space-y-2">
+            <label className="field-label">Expiration</label>
+            <input
+              type="datetime-local"
+              className="input-field"
+              value={expiresAt}
+              onChange={(event) => setExpiresAt(event.target.value)}
+            />
+          </div>
+
+          {error && <div className="error-banner">{error}</div>}
+
+          {!link ? (
+            <button type="button" onClick={handleCreateLink} disabled={loading} className="primary-button justify-center">
+              {loading ? <Loader2 className="animate-spin" size={18} /> : <Link2 size={18} />}
+              <span>{loading ? 'Creating link…' : 'Create share link'}</span>
+            </button>
+          ) : (
+            <div className="space-y-4">
+              <div className="info-tile">
+                <strong>Share URL</strong>
+                <code className="mt-2 block break-all text-xs">{link}</code>
+              </div>
+              <button type="button" onClick={handleCopy} className="secondary-button justify-center">
+                <Copy size={16} />
+                <span>{copied ? 'Copied' : 'Copy link'}</span>
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EditPeerModal({ peer, isAdmin, onClose, onSave }) {
+  const [form, setForm] = useState({
+    name: peer.name,
+    assigned_ips: peer.assigned_ips,
+    static_endpoint: peer.static_endpoint || '',
+    keepalive: peer.keepalive ? String(peer.keepalive) : '',
+    expires_at: peer.expires_at ? new Date(peer.expires_at).toISOString().slice(0, 16) : '',
+  });
+
+  const submit = async (event) => {
+    event.preventDefault();
+    await onSave(peer.id, {
+      name: form.name,
+      ...(isAdmin ? { assigned_ips: form.assigned_ips } : {}),
+      static_endpoint: form.static_endpoint,
+      keepalive: form.keepalive.trim() === '' ? 0 : Number.parseInt(form.keepalive, 10),
+      expires_at: form.expires_at ? new Date(form.expires_at).toISOString() : null,
+    });
+  };
+
+  return (
+    <div className="modal-backdrop">
+      <div className="modal-panel">
+        <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-6 py-5">
+          <div className="space-y-2">
+            <span className="eyebrow">Edit Peer</span>
+            <h2 className="text-2xl font-black tracking-tight">{peer.name}</h2>
+          </div>
+          <button type="button" onClick={onClose} className="ghost-button" aria-label="Close">
+            <X size={18} />
+          </button>
+        </div>
+
+        <form onSubmit={submit} className="space-y-5 px-6 py-6">
+          <div className="space-y-2">
+            <label className="field-label">Name</label>
+            <input className="input-field" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
+          </div>
+
+          {isAdmin && (
+            <div className="space-y-2">
+              <label className="field-label">Assigned IPs</label>
+              <input className="input-field font-mono text-sm" value={form.assigned_ips} onChange={(event) => setForm({ ...form, assigned_ips: event.target.value })} />
+            </div>
+          )}
+
+          <div className="grid gap-5 sm:grid-cols-2">
+            <div className="space-y-2">
+              <label className="field-label">Static Endpoint</label>
+              <input className="input-field" value={form.static_endpoint} onChange={(event) => setForm({ ...form, static_endpoint: event.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <label className="field-label">Keepalive</label>
+              <input className="input-field" type="number" min="0" placeholder="Blank disables it" value={form.keepalive} onChange={(event) => setForm({ ...form, keepalive: event.target.value })} />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="field-label">Expiration</label>
+            <input className="input-field" type="datetime-local" value={form.expires_at} onChange={(event) => setForm({ ...form, expires_at: event.target.value })} />
+          </div>
+
+          <div className="flex flex-col-reverse gap-3 border-t border-[var(--border)] pt-4 sm:flex-row sm:justify-end">
+            <button type="button" onClick={onClose} className="ghost-button justify-center">Cancel</button>
+            <button type="submit" className="primary-button justify-center">Save changes</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 export default function PeersTab({ isAdmin, onSelectPeer }) {
   const [peers, setPeers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [pinging, setPinging] = useState(null);
   const [editingPeer, setEditingPeer] = useState(null);
+  const [sharingPeer, setSharingPeer] = useState(null);
 
-  useEffect(() => { fetchPeers(); }, []);
+  useEffect(() => {
+    fetchPeers();
+    const intervalId = window.setInterval(fetchPeers, 15000);
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   const fetchPeers = async () => {
-    setLoading(true);
     try {
       const data = await api.getPeers();
       setPeers(data || []);
-    } catch (err) { console.error(err); }
-    finally { setLoading(false); }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleUpdate = async (id, data) => {
     try {
       await api.updatePeer(id, data);
       setEditingPeer(null);
-      fetchPeers();
-    } catch (err) { alert(err.message); }
+      await fetchPeers();
+    } catch (err) {
+      alert(err.message);
+    }
   };
 
   const handleToggle = async (peer) => {
     try {
       await api.updatePeer(peer.id, { enabled: !peer.enabled });
-      fetchPeers();
-    } catch (err) { alert(err.message); }
+      await fetchPeers();
+    } catch (err) {
+      alert(err.message);
+    }
   };
 
   const handlePing = async (id) => {
     setPinging(id);
     try {
       const res = await api.pingPeer(id);
-      alert(`Ping Result: ${res.received}/${res.transmitted} received. Avg RTT: ${res.round_trip_ms?.[0]?.toFixed(2) || 'N/A'}ms`);
-    } catch (err) { alert(`Ping failed: ${err.message}`); }
-    finally { setPinging(null); }
+      alert(`Ping result: ${res.received}/${res.transmitted} replies, average RTT ${res.round_trip_ms?.[0]?.toFixed(2) || 'N/A'} ms`);
+    } catch (err) {
+      alert(`Ping failed: ${err.message}`);
+    } finally {
+      setPinging(null);
+    }
   };
 
   const handleDelete = async (id) => {
     if (!confirm('Delete device?')) return;
     try {
       await api.deletePeer(id);
-      fetchPeers();
-    } catch (err) { alert(err.message); }
+      await fetchPeers();
+    } catch (err) {
+      alert(err.message);
+    }
   };
 
-  const formatBytes = (bytes) => {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
+  const groups = useMemo(() => peers.reduce((accumulator, peer) => {
+    const group = peer.username || 'Unknown';
+    if (!accumulator[group]) accumulator[group] = [];
+    accumulator[group].push(peer);
+    return accumulator;
+  }, {}), [peers]);
 
-  const groups = peers.reduce((acc, peer) => {
-    const user = peer.username || 'Unknown';
-    if (!acc[user]) acc[user] = [];
-    acc[user].push(peer);
-    return acc;
-  }, {});
-
-  if (loading) return <div className="flex justify-center py-20"><Loader2 className="animate-spin text-purple-500" size={40}/></div>;
+  if (loading) {
+    return (
+      <div className="state-shell py-24">
+        <Loader2 className="animate-spin text-[var(--accent)]" size={36} />
+        <p className="text-sm text-[var(--muted)]">Loading peers…</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-10 pb-20">
-      {Object.entries(groups).map(([user, userPeers]) => (
-        <div key={user} className="space-y-4">
-          <div className="flex items-center gap-4 px-2">
-            <User size={16} className="text-gray-500" />
-            <h3 className="text-sm font-bold text-gray-400 uppercase tracking-widest">
-              {user}
-            </h3>
-            <div className="h-px bg-gray-800 flex-1"></div>
+    <div className="space-y-10">
+      {Object.entries(groups).map(([username, userPeers]) => (
+        <section key={username} className="space-y-4">
+          <div className="flex items-center gap-3 px-1">
+            <div className="brand-badge">
+              <User size={16} />
+            </div>
+            <div>
+              <span className="eyebrow">Owner</span>
+              <h3 className="text-lg font-black tracking-tight">{username}</h3>
+            </div>
           </div>
-          <div className="grid grid-cols-1 gap-4">
-            {userPeers.map(peer => (
-              <div key={peer.id} className={`bg-gray-900 border ${peer.enabled ? 'border-gray-800' : 'border-red-900/30 opacity-60'} rounded-xl p-5 hover:border-purple-500/40 transition group relative overflow-hidden`}>
-                <div className="flex flex-wrap justify-between items-start gap-4 relative z-10">
-                  <div className="flex items-start gap-4">
-                    <div className={`p-3 rounded-lg ${peer.enabled ? 'bg-purple-500/10 text-purple-500 shadow-lg shadow-purple-500/5' : 'bg-gray-800 text-gray-500'}`}>
-                      <Smartphone size={24} />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h4 className="font-bold text-lg">{peer.name}</h4>
-                        {!peer.enabled && <span className="text-[10px] bg-red-500/20 text-red-500 px-1.5 py-0.5 rounded font-bold uppercase">Offline</span>}
-                        {peer.is_manual_key && <Lock size={12} className="text-amber-500" title="Manual Key" />}
-                      </div>
-                      <p className="text-sm font-mono text-purple-400 font-medium">{peer.assigned_ips}</p>
-                      <div className="flex flex-wrap gap-x-6 gap-y-1 mt-2 text-[11px] text-gray-500 font-medium">
-                        <span className="flex items-center gap-1"><Activity size={12}/> {peer.has_handshake ? `Handshake: ${new Date(peer.last_handshake_time).toLocaleTimeString()}` : 'No Handshake'}</span>
-                        <span className="flex items-center gap-1"><Globe size={12}/> {formatBytes(peer.transmit_bytes + peer.receive_bytes)}</span>
-                        {peer.expires_at && (
-                          <span className={`flex items-center gap-1 ${new Date(peer.expires_at) < new Date() ? 'text-red-500' : 'text-amber-500'}`}>
-                            Expires: {new Date(peer.expires_at).toLocaleDateString()}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
 
-                  <div className="flex items-center gap-1 bg-gray-950/50 p-1 rounded-xl border border-gray-800/50">
-                    <button onClick={() => handlePing(peer.id)} disabled={pinging === peer.id} className="p-2 hover:bg-gray-800 rounded-lg text-gray-400 transition" title="Ping">
-                      {pinging === peer.id ? <Loader2 size={18} className="animate-spin text-purple-500"/> : <Activity size={18} />}
-                    </button>
-                    <button onClick={() => setEditingPeer(peer)} className="p-2 hover:bg-gray-800 rounded-lg text-gray-400 transition" title="Edit">
-                      <Edit3 size={18} />
-                    </button>
-                    <button onClick={() => handleToggle(peer)} className={`p-2 hover:bg-gray-800 rounded-lg transition ${peer.enabled ? 'text-green-500' : 'text-red-500'}`} title={peer.enabled ? 'Disable' : 'Enable'}>
-                      {peer.enabled ? <Power size={18}/> : <PowerOff size={18}/>}
-                    </button>
-                    <div className="w-px h-4 bg-gray-800 mx-1"></div>
-                    
-                    {/* View Logic: can view if !is_e2e OR if we have the local nonce */}
-                    {(() => {
-                      const hasLocalNonce = !!localStorage.getItem(`nonce_${peer.public_key}`);
-                      const canView = !peer.is_e2e || hasLocalNonce;
-                      
-                      return (
-                        <button 
-                          onClick={() => canView ? onSelectPeer(peer) : null} 
-                          disabled={!canView}
-                          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition ${
-                            canView 
-                              ? 'bg-purple-600/10 text-purple-400 hover:bg-purple-600 hover:text-white' 
-                              : 'bg-gray-800/50 text-gray-600 cursor-not-allowed opacity-50'
-                          }`}
-                          title={!canView ? (peer.is_e2e ? 'Decryption key (nonce) missing from this browser' : 'Encryption locked') : ''}
-                        >
-                          <QrCode size={16} /> Config
+          <div className="grid gap-4">
+            {userPeers.map((peer) => {
+              const hasNonce = !!localStorage.getItem(`nonce_${peer.public_key}`);
+              const canRevealConfig = peer.has_private_key_material && (!peer.is_e2e || hasNonce);
+              const canShareConfig = canRevealConfig;
+
+              return (
+                <article key={peer.id} className={`peer-card ${peer.enabled ? '' : 'peer-card-disabled'}`}>
+                  <div className="flex flex-col gap-6">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="flex gap-4">
+                        <div className="peer-icon">
+                          <Smartphone size={24} />
+                        </div>
+                        <div className="space-y-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h4 className="text-xl font-black tracking-tight">{peer.name}</h4>
+                            {!peer.enabled && <span className="status-chip status-chip-danger">Disabled</span>}
+                            {peer.is_manual_key && <span className="status-chip status-chip-muted"><Lock size={12} /> Manual key</span>}
+                            {peer.keepalive > 0 && <span className="status-chip">Keepalive {peer.keepalive}s</span>}
+                          </div>
+                          <div className="space-y-1">
+                            <p className="font-mono text-sm text-[var(--accent)]">{peer.assigned_ips}</p>
+                            <div className="flex flex-wrap gap-4 text-sm text-[var(--muted)]">
+                              <span className="inline-flex items-center gap-1"><Activity size={14} /> {peer.has_handshake ? `Last handshake ${new Date(peer.last_handshake_time).toLocaleTimeString()}` : 'No handshake yet'}</span>
+                              <span className="inline-flex items-center gap-1"><Globe size={14} /> {formatBytes((peer.transmit_bytes || 0) + (peer.receive_bytes || 0))} total</span>
+                              {peer.expires_at && (
+                                <span className="inline-flex items-center gap-1">
+                                  Expires {new Date(peer.expires_at).toLocaleString()}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2 lg:justify-end">
+                        <button type="button" onClick={() => handlePing(peer.id)} disabled={pinging === peer.id} className="ghost-button">
+                          {pinging === peer.id ? <Loader2 className="animate-spin" size={16} /> : <Activity size={16} />}
+                          <span>Ping</span>
                         </button>
-                      );
-                    })()}
-
-                    <button onClick={() => handleDelete(peer.id)} className="p-2 hover:bg-red-500/20 text-gray-500 hover:text-red-500 rounded-lg transition">
-                      <Trash2 size={18} />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Protected Data Section */}
-                {(isAdmin || peer.public_key || peer.endpoint_ip || peer.static_endpoint) && (
-                  <div className="mt-4 pt-4 border-t border-gray-800/50 grid grid-cols-1 md:grid-cols-2 gap-4 text-[10px]">
-                    {peer.public_key && (
-                      <div>
-                        <span className="text-gray-600 block mb-1 uppercase font-black tracking-tighter">Public Key</span>
-                        <code className="bg-black/40 px-2 py-1.5 rounded-lg text-gray-400 block truncate border border-gray-800/50">{peer.public_key}</code>
+                        <button type="button" onClick={() => setEditingPeer(peer)} className="ghost-button">
+                          <Edit3 size={16} />
+                          <span>Edit</span>
+                        </button>
+                        <button type="button" onClick={() => handleToggle(peer)} className="ghost-button">
+                          {peer.enabled ? <Power size={16} /> : <PowerOff size={16} />}
+                          <span>{peer.enabled ? 'Disable' : 'Enable'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => canShareConfig ? setSharingPeer(peer) : null}
+                          className={`ghost-button ${canShareConfig ? '' : 'ghost-button-disabled'}`}
+                          title={canShareConfig ? 'Share config' : 'This browser cannot unlock a shareable config for this peer'}
+                        >
+                          <Link2 size={16} />
+                          <span>Share</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => canRevealConfig ? onSelectPeer(peer) : null}
+                          className={`primary-button ${canRevealConfig ? '' : 'primary-button-disabled'}`}
+                          title={canRevealConfig ? 'Open config' : 'This browser cannot decrypt the stored config'}
+                        >
+                          <QrCode size={16} />
+                          <span>Config</span>
+                        </button>
+                        <button type="button" onClick={() => handleDelete(peer.id)} className="ghost-button ghost-button-danger">
+                          <Trash2 size={16} />
+                          <span>Delete</span>
+                        </button>
                       </div>
-                    )}
-                    {(peer.endpoint_ip || peer.static_endpoint) && (
-                      <div>
-                        <span className="text-gray-600 block mb-1 uppercase font-black tracking-tighter">Endpoint / IP Privacy</span>
-                        <code className="bg-black/40 px-2 py-1.5 rounded-lg text-gray-400 block truncate border border-gray-800/50">
-                          {peer.static_endpoint ? `Static: ${peer.static_endpoint}` : (peer.endpoint_ip ? `Remote: ${peer.endpoint_ip}` : 'No Endpoint')}
-                        </code>
+                    </div>
+
+                    <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+                      <div className="traffic-panel">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <span className="eyebrow">Recent Traffic</span>
+                            <h5 className="text-lg font-black tracking-tight">Short-term in-memory usage graph</h5>
+                          </div>
+                          <span className="text-sm text-[var(--muted)]">
+                            {peer.traffic_history?.length || 0} samples
+                          </span>
+                        </div>
+                        <TrafficSparkline history={peer.traffic_history || []} />
+                        <div className="grid gap-3 sm:grid-cols-3">
+                          <div className="stat-tile">
+                            <span className="stat-label">Latest receive</span>
+                            <strong>{formatBytes(peer.traffic_history?.at(-1)?.receive_delta || 0)}</strong>
+                          </div>
+                          <div className="stat-tile">
+                            <span className="stat-label">Latest transmit</span>
+                            <strong>{formatBytes(peer.traffic_history?.at(-1)?.transmit_delta || 0)}</strong>
+                          </div>
+                          <div className="stat-tile">
+                            <span className="stat-label">Latest combined</span>
+                            <strong>{formatBytes(peer.traffic_history?.at(-1)?.total_delta || 0)}</strong>
+                          </div>
+                        </div>
                       </div>
-                    )}
+
+                      <div className="grid gap-3">
+                        {(isAdmin || peer.public_key) && (
+                          <div className="stat-tile">
+                            <span className="stat-label">Public key</span>
+                            <strong className="break-all font-mono text-sm">{peer.public_key || 'Hidden by policy'}</strong>
+                          </div>
+                        )}
+                        {(peer.endpoint_ip || peer.static_endpoint) && (
+                          <div className="stat-tile">
+                            <span className="stat-label">Endpoint visibility</span>
+                            <strong className="break-all font-mono text-sm">
+                              {peer.static_endpoint ? `Static ${peer.static_endpoint}` : peer.endpoint_ip}
+                            </strong>
+                          </div>
+                        )}
+                        <div className="stat-tile">
+                          <span className="stat-label">Config availability</span>
+                          <strong>
+                            {peer.has_private_key_material
+                              ? (peer.is_e2e ? (hasNonce ? 'Unlocked in this browser' : 'Nonce missing in this browser') : 'Server-managed')
+                              : 'Private key not retained'}
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                )}
-              </div>
-            ))}
+                </article>
+              );
+            })}
           </div>
-        </div>
+        </section>
       ))}
 
-      {/* Edit Modal */}
       {editingPeer && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl w-full max-w-md p-8">
-            <h2 className="text-2xl font-bold mb-6">Edit Peer Settings</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs text-gray-500 mb-1 uppercase font-bold">Name</label>
-                <input type="text" className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 outline-none" 
-                       defaultValue={editingPeer.name} onBlur={e => handleUpdate(editingPeer.id, { name: e.target.value })} />
-              </div>
-              {isAdmin && (
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1 uppercase font-bold">Assigned IPs / Subnets</label>
-                  <input type="text" className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 outline-none font-mono" 
-                         defaultValue={editingPeer.assigned_ips} onBlur={e => handleUpdate(editingPeer.id, { assigned_ips: e.target.value })} />
-                </div>
-              )}
-              <div>
-                <label className="block text-xs text-gray-500 mb-1 uppercase font-bold">Static Endpoint (host:port)</label>
-                <input type="text" className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 outline-none" 
-                       defaultValue={editingPeer.static_endpoint} onBlur={e => handleUpdate(editingPeer.id, { static_endpoint: e.target.value })} />
-              </div>
-              <div>
-                <label className="block text-xs text-gray-500 mb-1 uppercase font-bold">Keepalive (Seconds)</label>
-                <input type="number" className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 outline-none" 
-                       defaultValue={editingPeer.keepalive} onBlur={e => handleUpdate(editingPeer.id, { keepalive: parseInt(e.target.value) })} />
-              </div>
-              <div>
-                <label className="block text-xs text-gray-500 mb-1 uppercase font-bold">Expiration Date</label>
-                <input type="datetime-local" className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 outline-none text-white" 
-                       defaultValue={editingPeer.expires_at ? new Date(editingPeer.expires_at).toISOString().slice(0, 16) : ''} 
-                       onBlur={e => handleUpdate(editingPeer.id, { expires_at: e.target.value ? new Date(e.target.value).toISOString() : null })} />
-              </div>
-            </div>
-            <button onClick={() => setEditingPeer(null)} className="w-full mt-8 bg-gray-800 hover:bg-gray-700 py-3 rounded-lg font-bold transition">Close</button>
-          </div>
-        </div>
+        <EditPeerModal
+          peer={editingPeer}
+          isAdmin={isAdmin}
+          onClose={() => setEditingPeer(null)}
+          onSave={handleUpdate}
+        />
+      )}
+
+      {sharingPeer && (
+        <ShareModal peer={sharingPeer} onClose={() => setSharingPeer(null)} />
       )}
     </div>
   );

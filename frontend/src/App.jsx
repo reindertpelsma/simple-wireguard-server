@@ -1,36 +1,63 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { ShieldAlert } from 'lucide-react';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
-import { ShieldAlert } from 'lucide-react';
+import SharedConfigPage from './components/SharedConfigPage';
+
+function getInitialTheme() {
+  const stored = localStorage.getItem('theme');
+  if (stored === 'light' || stored === 'dark') {
+    return stored;
+  }
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function getSharedToken() {
+  const match = window.location.pathname.match(/^\/config\/([^/]+)$/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('token'));
-  const [isSecure, setIsSecure] = useState(true);
+  const [isSecure] = useState(() => window.isSecureContext);
+  const [theme, setTheme] = useState(getInitialTheme);
+  const sharedToken = getSharedToken();
 
   useEffect(() => {
-    if (!window.isSecureContext) {
-      setIsSecure(false);
-    }
-  }, []);
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem('theme', theme);
+  }, [theme]);
 
-  const handleLogout = () => {
-    localStorage.removeItem('token');
-    setIsLoggedIn(false);
+  const toggleTheme = () => {
+    setTheme((current) => current === 'dark' ? 'light' : 'dark');
   };
+
+  if (sharedToken) {
+    return (
+      <SharedConfigPage
+        token={sharedToken}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+      />
+    );
+  }
 
   return (
     <>
       {!isSecure && (
-        <div className="bg-amber-500 text-black px-4 py-2 text-sm font-bold flex items-center justify-center gap-2">
+        <div className="security-banner">
           <ShieldAlert size={16} />
-          Non-Secure Context detected. Web Crypto API (required for keys) might be disabled. 
-          Use localhost or HTTPS.
+          <span>Secure context recommended. Browser crypto features work best over HTTPS or localhost.</span>
         </div>
       )}
+
       {!isLoggedIn ? (
-        <Login onLogin={() => setIsLoggedIn(true)} />
+        <Login theme={theme} onToggleTheme={toggleTheme} onLogin={() => setIsLoggedIn(true)} />
       ) : (
-        <Dashboard onLogout={handleLogout} />
+        <Dashboard theme={theme} onToggleTheme={toggleTheme} onLogout={() => {
+          localStorage.removeItem('token');
+          setIsLoggedIn(false);
+        }} />
       )}
     </>
   );

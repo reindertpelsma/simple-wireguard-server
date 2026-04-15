@@ -1,27 +1,57 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { Plus, ShieldAlert, Trash2 } from 'lucide-react';
 import { api } from '../lib/api';
-import { ShieldAlert, Plus, Trash2 } from 'lucide-react';
 
 export default function ACLsTab() {
   const [acls, setACLs] = useState([]);
-  const [newACL, setNewACL] = useState({ list_name: 'relay', action: 'allow', src: '', dst: '', proto: '', dport: '', priority: 0 });
+  const [newACL, setNewACL] = useState({
+    list_name: 'relay',
+    action: 'allow',
+    src: '',
+    dst: '',
+    proto: '',
+    dport: '',
+    priority: 0,
+  });
 
-  useEffect(() => { fetchACLs(); }, []);
-
-  const fetchACLs = async () => {
+  async function fetchACLs() {
     try {
       const data = await api.getACLs();
       setACLs(data);
-    } catch (err) { console.error(err); }
-  };
+    } catch (err) {
+      console.error(err);
+    }
+  }
 
-  const handleCreate = async (e) => {
-    e.preventDefault();
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadACLs() {
+      try {
+        const data = await api.getACLs();
+        if (!cancelled) {
+          setACLs(data);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    loadACLs();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleCreate = async (event) => {
+    event.preventDefault();
     try {
-      await api.createACL({...newACL, priority: parseInt(newACL.priority)});
+      await api.createACL({ ...newACL, priority: Number.parseInt(newACL.priority, 10) || 0 });
       setNewACL({ list_name: 'relay', action: 'allow', src: '', dst: '', proto: '', dport: '', priority: 0 });
       fetchACLs();
-    } catch (err) { alert(err.message); }
+    } catch (err) {
+      alert(err.message);
+    }
   };
 
   const handleDelete = async (id) => {
@@ -29,100 +59,108 @@ export default function ACLsTab() {
     try {
       await api.deleteACL(id);
       fetchACLs();
-    } catch (err) { alert(err.message); }
+    } catch (err) {
+      alert(err.message);
+    }
   };
 
   return (
-    <div className="space-y-8">
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-        <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
-          <ShieldAlert size={20} className="text-purple-500" /> New Firewall Rule
-        </h3>
-        <form onSubmit={handleCreate} className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-8 gap-4 items-end">
-          <div className="col-span-1">
-            <label className="block text-xs text-gray-400 mb-1">List</label>
-            <select className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 outline-none" 
-                    value={newACL.list_name} onChange={e => setNewACL({...newACL, list_name: e.target.value})}>
+    <div className="space-y-6">
+      <section className="panel p-6">
+        <div className="mb-6 flex items-center gap-3">
+          <div className="brand-badge">
+            <ShieldAlert size={18} />
+          </div>
+          <div>
+            <span className="eyebrow">Firewall Policy</span>
+            <h3 className="text-2xl font-black tracking-tight">Create a rule</h3>
+          </div>
+        </div>
+
+        <form onSubmit={handleCreate} className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="space-y-2">
+            <label className="field-label">List</label>
+            <select className="select-field" value={newACL.list_name} onChange={(event) => setNewACL({ ...newACL, list_name: event.target.value })}>
               <option value="relay">Relay</option>
               <option value="inbound">Inbound</option>
               <option value="outbound">Outbound</option>
             </select>
           </div>
-          <div className="col-span-1">
-            <label className="block text-xs text-gray-400 mb-1">Action</label>
-            <select className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 outline-none"
-                    value={newACL.action} onChange={e => setNewACL({...newACL, action: e.target.value})}>
+          <div className="space-y-2">
+            <label className="field-label">Action</label>
+            <select className="select-field" value={newACL.action} onChange={(event) => setNewACL({ ...newACL, action: event.target.value })}>
               <option value="allow">Allow</option>
               <option value="deny">Deny</option>
             </select>
           </div>
-          <div className="col-span-1">
-            <label className="block text-xs text-gray-400 mb-1">Source</label>
-            <input type="text" placeholder="10.0.0.0/24" className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 outline-none text-sm"
-                   value={newACL.src} onChange={e => setNewACL({...newACL, src: e.target.value})} />
+          <div className="space-y-2">
+            <label className="field-label">Source</label>
+            <input className="input-field" placeholder="10.0.0.0/24" value={newACL.src} onChange={(event) => setNewACL({ ...newACL, src: event.target.value })} />
           </div>
-          <div className="col-span-1">
-            <label className="block text-xs text-gray-400 mb-1">Destination</label>
-            <input type="text" placeholder="0.0.0.0/0" className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 outline-none text-sm"
-                   value={newACL.dst} onChange={e => setNewACL({...newACL, dst: e.target.value})} />
+          <div className="space-y-2">
+            <label className="field-label">Destination</label>
+            <input className="input-field" placeholder="0.0.0.0/0" value={newACL.dst} onChange={(event) => setNewACL({ ...newACL, dst: event.target.value })} />
           </div>
-          <div className="col-span-1">
-            <label className="block text-xs text-gray-400 mb-1">Proto</label>
-            <input type="text" placeholder="tcp" className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 outline-none text-sm"
-                   value={newACL.proto} onChange={e => setNewACL({...newACL, proto: e.target.value})} />
+          <div className="space-y-2">
+            <label className="field-label">Protocol</label>
+            <input className="input-field" placeholder="tcp" value={newACL.proto} onChange={(event) => setNewACL({ ...newACL, proto: event.target.value })} />
           </div>
-          <div className="col-span-1">
-            <label className="block text-xs text-gray-400 mb-1">Port</label>
-            <input type="text" placeholder="80,443" className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 outline-none text-sm"
-                   value={newACL.dport} onChange={e => setNewACL({...newACL, dport: e.target.value})} />
+          <div className="space-y-2">
+            <label className="field-label">Port</label>
+            <input className="input-field" placeholder="80-443" value={newACL.dport} onChange={(event) => setNewACL({ ...newACL, dport: event.target.value })} />
           </div>
-          <div className="col-span-1">
-            <label className="block text-xs text-gray-400 mb-1">Prio</label>
-            <input type="number" className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 outline-none text-sm"
-                   value={newACL.priority} onChange={e => setNewACL({...newACL, priority: e.target.value})} />
+          <div className="space-y-2">
+            <label className="field-label">Priority</label>
+            <input className="input-field" type="number" value={newACL.priority} onChange={(event) => setNewACL({ ...newACL, priority: event.target.value })} />
           </div>
-          <button type="submit" className="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded font-bold h-[38px] flex items-center justify-center">
-            <Plus size={18}/>
-          </button>
+          <div className="flex items-end">
+            <button type="submit" className="primary-button w-full justify-center">
+              <Plus size={16} />
+              <span>Add rule</span>
+            </button>
+          </div>
         </form>
-      </div>
+      </section>
 
-      <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-        <table className="w-full text-left">
+      <section className="table-shell">
+        <table>
           <thead>
-            <tr className="bg-gray-800 text-gray-400 text-xs uppercase tracking-wider">
-              <th className="px-6 py-3">List</th>
-              <th className="px-6 py-3">Action</th>
-              <th className="px-6 py-3">Source</th>
-              <th className="px-6 py-3">Destination</th>
-              <th className="px-6 py-3">Proto</th>
-              <th className="px-6 py-3">Port</th>
-              <th className="px-6 py-3">Prio</th>
-              <th className="px-6 py-3"></th>
+            <tr>
+              <th>List</th>
+              <th>Action</th>
+              <th>Source</th>
+              <th>Destination</th>
+              <th>Proto</th>
+              <th>Port</th>
+              <th>Priority</th>
+              <th></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-800 text-sm">
-            {acls.map(a => (
-              <tr key={a.id} className="hover:bg-white/5 transition">
-                <td className="px-6 py-4 capitalize font-mono text-purple-400">{a.list_name}</td>
-                <td className="px-6 py-4">
-                  <span className={`px-2 py-1 rounded text-xs font-bold ${a.action === 'allow' ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
-                    {a.action.toUpperCase()}
+          <tbody>
+            {acls.map((acl) => (
+              <tr key={acl.id}>
+                <td className="font-mono text-sm">{acl.list_name}</td>
+                <td>
+                  <span className={`status-chip ${acl.action === 'deny' ? 'status-chip-danger' : ''}`}>
+                    {acl.action.toUpperCase()}
                   </span>
                 </td>
-                <td className="px-6 py-4 font-mono text-xs">{a.src || '*'}</td>
-                <td className="px-6 py-4 font-mono text-xs">{a.dst || '*'}</td>
-                <td className="px-6 py-4 font-mono text-xs uppercase">{a.proto || '*'}</td>
-                <td className="px-6 py-4 font-mono text-xs">{a.dport || '*'}</td>
-                <td className="px-6 py-4">{a.priority}</td>
-                <td className="px-6 py-4">
-                  <button onClick={() => handleDelete(a.id)} className="text-gray-500 hover:text-red-500 transition"><Trash2 size={16}/></button>
+                <td className="font-mono text-xs">{acl.src || '*'}</td>
+                <td className="font-mono text-xs">{acl.dst || '*'}</td>
+                <td className="font-mono text-xs uppercase">{acl.proto || '*'}</td>
+                <td className="font-mono text-xs">{acl.dport || '*'}</td>
+                <td>{acl.priority}</td>
+                <td className="text-right">
+                  <button type="button" onClick={() => handleDelete(acl.id)} className="ghost-button ghost-button-danger">
+                    <Trash2 size={16} />
+                    <span>Delete</span>
+                  </button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-      </div>
+      </section>
     </div>
   );
 }
