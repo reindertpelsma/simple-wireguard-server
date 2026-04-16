@@ -576,7 +576,7 @@ func initGlobalSettings() {
 		// Canonical YAML Toggles
 		"yaml_l3_forwarding":       "true",
 		"yaml_block_rfc":           "true",
-		"yaml_host_forward":        "false",
+		"yaml_host_forward":        "true",
 		"yaml_socks5_port":         "1080",
 		"yaml_inbound_transparent": "true",
 		"yaml_socks5_udp":          "true",
@@ -1439,6 +1439,16 @@ func generateCanonicalYAML() {
 		},
 		"relay": map[string]interface{}{
 			"enabled": getConfig("yaml_l3_forwarding") == "true",
+		},
+		"host_forward": map[string]interface{}{
+			"proxy": map[string]interface{}{
+				"enabled":     getConfig("yaml_host_forward") == "true",
+				"redirect_ip": "127.0.0.1",
+			},
+			"inbound": map[string]interface{}{
+				"enabled":     getConfig("yaml_host_forward") == "true",
+				"redirect_ip": "127.0.0.1",
+			},
 		},
 		"dns_server": map[string]interface{}{
 			"listen": getConfig("client_dns") + ":53",
