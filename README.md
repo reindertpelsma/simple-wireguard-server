@@ -15,27 +15,27 @@ Build a secure, rootless SD-WAN or VPN exit node in seconds.
    ./uwgsocks-ui -listen 0.0.0.0:8080
    ```
    On the very first startup, the server now prints a random admin password and generates a bootstrap WireGuard client config unless you disable it with `-generate-config=false`.
-3. **Run with TURN (NAT Traversal):**
+3. **Docker**
+   No special capabilities required, this simple wireguard server works even in the most restrictive containers
+
    ```bash
-   ./uwgsocks-ui -turn-server my-turn.com:3478 -turn-user user -turn-pass pass
+   docker compose build
+   docker compose up -d
    ```
-4. **Login:** Open `http://localhost:8080` and sign in with `admin` plus the password printed in the terminal.
+5. **Login:** Open `http://localhost:8080` and sign in with `admin` plus the password printed in the terminal. 
 
 ## Key Features
 
-- **Zero-Trust Security:** Client private keys never touch the server (encrypted in-browser via AES-GCM).
-- **NAT Traversal:** Built-in **TURN server support** for connectivity through strict firewalls/CGNAT.
-- **TCP MSS Clamping:** Automatic tunnel MTU enforcement for reliable TCP performance.
-- **SD-WAN Ready:** Group peers by user, manage firewall ACLs, and handle multi-user environments.
-- **Dual-Stack IP:** Automatically assigns IPv4 (/32) and IPv6 (/128) addresses to every peer.
-- **Configuration Merging:** Support for merging UI settings with a custom baseline YAML config.
-- **Runtime Traffic Shaping:** Admins can update per-peer upload/download/latency shapers while the daemon is running.
 - **Admin Dashboard:** Real-time metrics, handshakes, short-term traffic graphs, and global setting management.
-- **Hardened Login Surface:** Anonymous visitors receive a small standalone login page; the dashboard bundle is served after authentication.
-- **2FA and OIDC:** Local users can enable TOTP 2FA, and operators can enable OIDC login with CLI flags or environment variables.
-- **Bootstrap Friendly:** First-run random admin credentials plus optional `-generate-config` output for immediate SSH-only bring-up.
-- **Shareable Configs:** Create self-authenticated config links with optional expiry or one-time use; E2E links keep the decrypting nonce in the URL fragment.
 - **Responsive UI:** Mobile-friendly layout with both dark and light themes.
+- **2FA and OIDC:** Local users can enable TOTP 2FA, and operators can enable OIDC login with CLI flags or environment variables.
+- **SD-WAN Ready:** Group peers by user, manage firewall ACLs, and handle multi-user environments.
+- **IPv6 support:** First class support for IPv6
+- **Runtime Traffic Shaping:** Admins can update per-peer upload/download/latency shapers while the daemon is running.
+- **Configuration Merging:** Support for merging UI settings with a custom baseline YAML config.
+- **Shareable Configs:** Create self-authenticated config links with optional expiry or one-time use; E2E links keep the decrypting nonce in the URL fragment.
+- **Zero-Trust Security:** Client private keys never touch the server (encrypted in-browser via AES-GCM).
+- **NAT Traversal:** Built-in TURN server support for connectivity through strict firewalls/CGNAT, by hosting a small TURN server see the userspace wireguard socks project.
 - **Secure by Default:** Argon2id hashing, encryption at rest for DB fields, and single-port HTTP/HTTPS multiplexing.
 
 ## Advanced Usage
