@@ -1,0 +1,89 @@
+openapi: 3.0.0
+info:
+  title: WireGuard SD-WAN API
+  version: 1.0.0
+  description: Management API for Userspace WireGuard VPN
+servers:
+  - url: /
+paths:
+  /api/login:
+    post:
+      summary: Login with username and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username: { type: string }
+                password: { type: string }
+      responses:
+        '200':
+          description: Successful login
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+  /api/peers:
+    get:
+      summary: List all accessible peers
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: List of peers
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Peer' }
+    post:
+      summary: Create a new peer
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PeerCreate' }
+      responses:
+        '201':
+          description: Created
+  /api/peers/{id}/ping:
+    post:
+      summary: Ping a peer's tunnel IP
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Ping result
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    Peer:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        assigned_ips: { type: string }
+        public_key: { type: string }
+        enabled: { type: boolean }
+        transmit_bytes: { type: integer }
+        receive_bytes: { type: integer }
+    PeerCreate:
+      type: object
+      required: [name, public_key]
+      properties:
+        name: { type: string }
+        public_key: { type: string }
+        nonce_hash: { type: string }
+        encrypted_private_key: { type: string }
+        requested_ip: { type: string }
+        keepalive: { type: integer }

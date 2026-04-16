@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  uwgsocks-ui:
+    build:
+      context: ..
+      dockerfile: uwgsocks-ui/Dockerfile
+    image: uwgsocks-ui:latest
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    ports:
+      - "8080:8080"
+      - "51820:51820/udp"
+    volumes:
+      - uwgsocks_data:/app/data
+    environment:
+      - WG_PUBLIC_ENDPOINT=1.2.3.4:51820
+      - WG_CLIENT_DNS=100.64.0.1
+      - BASELINE_CONFIG=
+      # To enable system mode (kernel WireGuard), set SYSTEM_MODE=true 
+    # For system mode, uncomment below:
+    # cap_add:
+    #   - NET_ADMIN
+    # network_mode: host
+
+volumes:
+  uwgsocks_data:
