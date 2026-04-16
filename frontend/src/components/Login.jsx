@@ -1,13 +1,22 @@
-import { useState } from 'react';
-import { Loader2, Shield } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { KeyRound, Loader2, Shield } from 'lucide-react';
 import { api } from '../lib/api';
 import ThemeToggle from './ThemeToggle';
 
 export default function Login({ theme = 'light', onToggleTheme = () => {}, onLogin }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [totpCode, setTotpCode] = useState('');
+  const [requires2FA, setRequires2FA] = useState(false);
+  const [authMethods, setAuthMethods] = useState({ oidc_enabled: false, oidc_login: '/api/oidc/login' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.getAuthMethods()
+      .then(setAuthMethods)
+      .catch(() => {});
+  }, []);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -15,7 +24,13 @@ export default function Login({ theme = 'light', onToggleTheme = () => {}, onLog
     setError('');
 
     try {
-      const { token } = await api.login(username, password);
+      const result = await api.login(username, password, totpCode);
+      if (result?.requires_2fa) {
+        setRequires2FA(true);
+        setError('');
+        return;
+      }
+      const { token } = result;
       localStorage.setItem('token', token);
       onLogin();
     } catch (err) {
@@ -94,6 +109,21 @@ export default function Login({ theme = 'light', onToggleTheme = () => {}, onLog
                 />
               </div>
 
+              {requires2FA && (
+                <div className="space-y-2">
+                  <label className="field-label">Two-factor code</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    required
+                    className="input-field"
+                    placeholder="123456"
+                    value={totpCode}
+                    onChange={(event) => setTotpCode(event.target.value)}
+                  />
+                </div>
+              )}
+
               {error && (
                 <div className="error-banner">
                   {error}
@@ -102,8 +132,15 @@ export default function Login({ theme = 'light', onToggleTheme = () => {}, onLog
 
               <button type="submit" disabled={loading} className="primary-button w-full justify-center">
                 {loading ? <Loader2 className="animate-spin" size={18} /> : null}
-                <span>{loading ? 'Signing in…' : 'Enter dashboard'}</span>
+                <span>{loading ? 'Signing in…' : (requires2FA ? 'Verify 2FA code' : 'Enter dashboard')}</span>
               </button>
+
+              {authMethods.oidc_enabled && (
+                <a href={authMethods.oidc_login || '/api/oidc/login'} className="secondary-button w-full justify-center">
+                  <KeyRound size={18} />
+                  <span>Continue with OIDC</span>
+                </a>
+              )}
             </form>
           </section>
         </div>

@@ -29,7 +29,10 @@ Build a secure, rootless SD-WAN or VPN exit node in seconds.
 - **SD-WAN Ready:** Group peers by user, manage firewall ACLs, and handle multi-user environments.
 - **Dual-Stack IP:** Automatically assigns IPv4 (/32) and IPv6 (/128) addresses to every peer.
 - **Configuration Merging:** Support for merging UI settings with a custom baseline YAML config.
+- **Runtime Traffic Shaping:** Admins can update per-peer upload/download/latency shapers while the daemon is running.
 - **Admin Dashboard:** Real-time metrics, handshakes, short-term traffic graphs, and global setting management.
+- **Hardened Login Surface:** Anonymous visitors receive a small standalone login page; the dashboard bundle is served after authentication.
+- **2FA and OIDC:** Local users can enable TOTP 2FA, and operators can enable OIDC login with CLI flags or environment variables.
 - **Bootstrap Friendly:** First-run random admin credentials plus optional `-generate-config` output for immediate SSH-only bring-up.
 - **Shareable Configs:** Create self-authenticated config links with optional expiry or one-time use; E2E links keep the decrypting nonce in the URL fragment.
 - **Responsive UI:** Mobile-friendly layout with both dark and light themes.
@@ -47,6 +50,9 @@ Detailed technical documentation and API schemas are available in the [docs/](./
 - `-dsn`: Database connection string.
 - `-wg-url`: Connect to daemon via Unix socket (default) or HTTP.
 - `-generate-config`: Immediately mint and print a bootstrap WireGuard client config on startup. Defaults to enabled on the first boot.
+- `-frontend-dir`: Serve dashboard assets from a custom Vite `dist` directory instead of the embedded bundle.
+- `-extract-dist`: Extract the embedded dashboard bundle to a directory and exit.
+- `-oidc-issuer`, `-oidc-client-id`, `-oidc-client-secret`, `-oidc-redirect-url`: Enable OIDC sign-in. The same values can be supplied with `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and `OIDC_REDIRECT_URL`.
 
 ## License
 ISC License. See [LICENSE](./LICENSE) for details.

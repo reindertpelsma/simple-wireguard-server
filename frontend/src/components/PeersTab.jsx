@@ -19,6 +19,25 @@ import { api } from '../lib/api';
 import { formatBytes } from '../lib/config';
 import TrafficSparkline from './TrafficSparkline';
 
+function formatBps(value) {
+  const bps = Number(value || 0);
+  if (bps <= 0) return 'unlimited';
+  const units = ['bps', 'Kbps', 'Mbps', 'Gbps'];
+  let scaled = bps;
+  let index = 0;
+  while (scaled >= 1000 && index < units.length - 1) {
+    scaled /= 1000;
+    index += 1;
+  }
+  return `${scaled >= 10 || index === 0 ? scaled.toFixed(0) : scaled.toFixed(1)} ${units[index]}`;
+}
+
+function parseNumberField(value) {
+  const text = String(value || '').trim();
+  if (!text) return 0;
+  return Number.parseInt(text, 10) || 0;
+}
+
 function ShareModal({ peer, onClose }) {
   const [oneUse, setOneUse] = useState(false);
   const [expiresAt, setExpiresAt] = useState('');
@@ -117,6 +136,9 @@ function EditPeerModal({ peer, isAdmin, onClose, onSave }) {
     static_endpoint: peer.static_endpoint || '',
     keepalive: peer.keepalive ? String(peer.keepalive) : '',
     expires_at: peer.expires_at ? new Date(peer.expires_at).toISOString().slice(0, 16) : '',
+    traffic_upload_bps: peer.traffic_upload_bps ? String(peer.traffic_upload_bps) : '',
+    traffic_download_bps: peer.traffic_download_bps ? String(peer.traffic_download_bps) : '',
+    traffic_latency_ms: peer.traffic_latency_ms ? String(peer.traffic_latency_ms) : '',
   });
 
   const submit = async (event) => {
@@ -127,6 +149,13 @@ function EditPeerModal({ peer, isAdmin, onClose, onSave }) {
       static_endpoint: form.static_endpoint,
       keepalive: form.keepalive.trim() === '' ? 0 : Number.parseInt(form.keepalive, 10),
       expires_at: form.expires_at ? new Date(form.expires_at).toISOString() : null,
+      ...(isAdmin ? {
+        traffic_shaper: {
+          upload_bps: parseNumberField(form.traffic_upload_bps),
+          download_bps: parseNumberField(form.traffic_download_bps),
+          latency_ms: parseNumberField(form.traffic_latency_ms),
+        },
+      } : {}),
     });
   };
 
@@ -171,6 +200,29 @@ function EditPeerModal({ peer, isAdmin, onClose, onSave }) {
             <label className="field-label">Expiration</label>
             <input className="input-field" type="datetime-local" value={form.expires_at} onChange={(event) => setForm({ ...form, expires_at: event.target.value })} />
           </div>
+
+          {isAdmin && (
+            <div className="space-y-3 rounded-3xl border border-[var(--border)] bg-[var(--surface-soft)] p-4">
+              <div>
+                <span className="eyebrow">Traffic Shaper</span>
+                <p className="mt-2 text-sm text-[var(--muted)]">Set per-peer limits live through the daemon API. Leave a field blank or zero to disable that dimension.</p>
+              </div>
+              <div className="grid gap-5 sm:grid-cols-3">
+                <div className="space-y-2">
+                  <label className="field-label">Upload bps</label>
+                  <input className="input-field" type="number" min="0" placeholder="0" value={form.traffic_upload_bps} onChange={(event) => setForm({ ...form, traffic_upload_bps: event.target.value })} />
+                </div>
+                <div className="space-y-2">
+                  <label className="field-label">Download bps</label>
+                  <input className="input-field" type="number" min="0" placeholder="0" value={form.traffic_download_bps} onChange={(event) => setForm({ ...form, traffic_download_bps: event.target.value })} />
+                </div>
+                <div className="space-y-2">
+                  <label className="field-label">Latency ms</label>
+                  <input className="input-field" type="number" min="0" placeholder="0" value={form.traffic_latency_ms} onChange={(event) => setForm({ ...form, traffic_latency_ms: event.target.value })} />
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="flex flex-col-reverse gap-3 border-t border-[var(--border)] pt-4 sm:flex-row sm:justify-end">
             <button type="button" onClick={onClose} className="ghost-button justify-center">Cancel</button>
@@ -282,6 +334,7 @@ export default function PeersTab({ isAdmin, onSelectPeer }) {
               const hasNonce = !!localStorage.getItem(`nonce_${peer.public_key}`);
               const canRevealConfig = peer.has_private_key_material && (!peer.is_e2e || hasNonce);
               const canShareConfig = canRevealConfig;
+              const hasShaper = (peer.traffic_upload_bps || 0) > 0 || (peer.traffic_download_bps || 0) > 0 || (peer.traffic_latency_ms || 0) > 0;
 
               return (
                 <article key={peer.id} className={`peer-card ${peer.enabled ? '' : 'peer-card-disabled'}`}>
@@ -297,6 +350,7 @@ export default function PeersTab({ isAdmin, onSelectPeer }) {
                             {!peer.enabled && <span className="status-chip status-chip-danger">Disabled</span>}
                             {peer.is_manual_key && <span className="status-chip status-chip-muted"><Lock size={12} /> Manual key</span>}
                             {peer.keepalive > 0 && <span className="status-chip">Keepalive {peer.keepalive}s</span>}
+                            {hasShaper && <span className="status-chip">Shaped</span>}
                           </div>
                           <div className="space-y-1">
                             <p className="font-mono text-sm text-[var(--accent)]">{peer.assigned_ips}</p>
@@ -380,6 +434,13 @@ export default function PeersTab({ isAdmin, onSelectPeer }) {
                       </div>
 
                       <div className="grid gap-3">
+                        <div className="stat-tile">
+                          <span className="stat-label">Traffic shaper</span>
+                          <strong>
+                            Up {formatBps(peer.traffic_upload_bps)} · Down {formatBps(peer.traffic_download_bps)}
+                            {(peer.traffic_latency_ms || 0) > 0 ? ` · +${peer.traffic_latency_ms} ms` : ''}
+                          </strong>
+                        </div>
                         {(isAdmin || peer.public_key) && (
                           <div className="stat-tile">
                             <span className="stat-label">Public key</span>

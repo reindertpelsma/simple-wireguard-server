@@ -37,6 +37,15 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
 
   const visibleTabs = tabs.filter((tab) => isAdmin || !tab.adminOnly);
 
+  const handleLogout = async () => {
+    try {
+      await api.logout();
+    } catch {
+      // The local session is cleared either way; logout should feel reliable.
+    }
+    onLogout();
+  };
+
   return (
     <div className="app-shell">
       <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-[var(--panel)]/95 backdrop-blur-xl">
@@ -63,7 +72,7 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
               </button>
               <button
                 type="button"
-                onClick={onLogout}
+                onClick={handleLogout}
                 className="ghost-button"
                 aria-label="Log out"
                 title="Log out"

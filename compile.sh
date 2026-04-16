@@ -31,6 +31,6 @@ echo "Building uwgkm (Kernel Manager)..."
 cd syswg && go build -ldflags="-s -w" -o ../uwgkm main.go && cd ..
 
 echo "Building uwgsocks-ui binary..."
-CGO_ENABLED=1 go build -ldflags="-s -w" -o uwgsocks-ui main.go
+CGO_ENABLED=1 go build -ldflags="-s -w" -o uwgsocks-ui .
 
 echo "Done! Run with: ./uwgsocks-ui -listen 0.0.0.0:8080"

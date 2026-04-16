@@ -21,7 +21,8 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w -extldflags '-static'" -o /bin/uwgkm 
 
 # Build uwgsocks-ui
 WORKDIR /src/uwgsocks-ui
-RUN CGO_ENABLED=1 go build -ldflags="-s -w -extldflags '-static'" -o /bin/uwgsocks-ui main.go
+COPY --from=frontend-builder /app/dist /src/uwgsocks-ui/dist
+RUN CGO_ENABLED=1 go build -ldflags="-s -w -extldflags '-static'" -o /bin/uwgsocks-ui .
 
 # Stage 3: Final slim image
 FROM scratch
