@@ -89,6 +89,10 @@ func handleFrontendRequest(w http.ResponseWriter, r *http.Request) {
 		serveDistAsset(w, r, "index.html", true)
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, "/assets/") && isSharedConfigReferer(r) {
+		serveDistAsset(w, r, strings.TrimPrefix(r.URL.Path, "/"), false)
+		return
+	}
 
 	if !isFrontendAuthenticated(r) {
 		http.Redirect(w, r, "/login", http.StatusFound)
@@ -110,6 +114,15 @@ func isFrontendAuthenticated(r *http.Request) bool {
 	var count int64
 	gdb.Model(&User{}).Where("token = ?", token).Count(&count)
 	return count > 0
+}
+
+func isSharedConfigReferer(r *http.Request) bool {
+	ref := r.Referer()
+	if ref == "" {
+		return false
+	}
+	return strings.HasPrefix(ref, "http://"+r.Host+"/config/") ||
+		strings.HasPrefix(ref, "https://"+r.Host+"/config/")
 }
 
 func serveDistAsset(w http.ResponseWriter, r *http.Request, name string, spaFallback bool) {

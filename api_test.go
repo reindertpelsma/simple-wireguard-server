@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -438,6 +439,48 @@ func TestFrontendDistIsCookieGated(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected authenticated /app to serve frontend, got %d: %s", w.Code, w.Body.String())
 	}
+
+	asset := firstDistJSAsset(t)
+	req = httptest.NewRequest("GET", "http://ui.example/"+asset, nil)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusFound || w.Header().Get("Location") != "/login" {
+		t.Fatalf("expected anonymous dashboard asset redirect, got %d location=%q", w.Code, w.Header().Get("Location"))
+	}
+
+	req = httptest.NewRequest("GET", "http://ui.example/"+asset, nil)
+	req.Header.Set("Referer", "http://ui.example/config/share-token")
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected shared config asset to load with config referer, got %d", w.Code)
+	}
+}
+
+func firstDistJSAsset(t *testing.T) string {
+	t.Helper()
+	dist, err := frontendDist()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found string
+	err = fs.WalkDir(dist, "assets", func(name string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() && strings.HasSuffix(name, ".js") {
+			found = name
+			return fs.SkipAll
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found == "" {
+		t.Fatal("no frontend JS asset found in dist")
+	}
+	return found
 }
 
 func TestGetPeerPrivateAllowsServerManagedKeysWithoutNonce(t *testing.T) {
