@@ -22,7 +22,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/fs"
 	"log"
 	"math/big"
 	"net"
@@ -69,6 +68,13 @@ var (
 
 	baselineConfig = flag.String("baseline-config", "", "Path to baseline YAML configuration to merge with UI settings")
 	generateConfig = flag.Bool("generate-config", false, "Generate and print a bootstrap WireGuard client config on startup")
+	frontendDir    = flag.String("frontend-dir", "", "Serve frontend assets from this dist directory instead of the embedded dist")
+	extractDist    = flag.String("extract-dist", "", "Extract the embedded frontend dist directory to this path and exit")
+
+	oidcIssuer       = flag.String("oidc-issuer", "", "OIDC issuer URL; enables OIDC login when set")
+	oidcClientID     = flag.String("oidc-client-id", "", "OIDC client ID")
+	oidcClientSecret = flag.String("oidc-client-secret", "", "OIDC client secret")
+	oidcRedirectURL  = flag.String("oidc-redirect-url", "", "OIDC callback URL; defaults to /api/oidc/callback on this server")
 
 	systemMode = flag.Bool("system", false, "Use kernel WireGuard (requires root)")
 	autoSystem = flag.Bool("auto-system", false, "Auto-detect and use kernel WireGuard if possible")
@@ -171,6 +177,9 @@ type Peer struct {
 	IsOwner             bool       `gorm:"-" json:"is_owner"`
 	StaticEndpoint      string     `json:"static_endpoint,omitempty"`
 	ExpiresAt           *time.Time `json:"expires_at,omitempty"`
+	TrafficUploadBps    int64      `gorm:"default:0" json:"traffic_upload_bps"`
+	TrafficDownloadBps  int64      `gorm:"default:0" json:"traffic_download_bps"`
+	TrafficLatencyMs    int        `gorm:"default:0" json:"traffic_latency_ms"`
 	// Stats from uwgsocks (volatile)
 	LastHandshakeTime     string             `gorm:"-" json:"last_handshake_time,omitempty"`
 	TransmitBytes         uint64             `gorm:"-" json:"transmit_bytes"`
@@ -351,8 +360,30 @@ func ensureSelfSignedCert() (string, string) {
 func main() {
 	flag.Parse()
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	if *extractDist != "" {
+		if err := extractEmbeddedDist(*extractDist); err != nil {
+			log.Fatalf("extract frontend dist: %v", err)
+		}
+		log.Printf("Extracted embedded frontend dist to %s", *extractDist)
+		return
+	}
 	if *baselineConfig == "" {
 		*baselineConfig = os.Getenv("BASELINE_CONFIG")
+	}
+	if *frontendDir == "" {
+		*frontendDir = os.Getenv("UWGS_UI_FRONTEND_DIR")
+	}
+	if *oidcIssuer == "" {
+		*oidcIssuer = os.Getenv("OIDC_ISSUER")
+	}
+	if *oidcClientID == "" {
+		*oidcClientID = os.Getenv("OIDC_CLIENT_ID")
+	}
+	if *oidcClientSecret == "" {
+		*oidcClientSecret = os.Getenv("OIDC_CLIENT_SECRET")
+	}
+	if *oidcRedirectURL == "" {
+		*oidcRedirectURL = os.Getenv("OIDC_REDIRECT_URL")
 	}
 	if *turnServer == "" {
 		*turnServer = os.Getenv("TURN_SERVER")
@@ -411,7 +442,15 @@ func main() {
 
 	// Auth
 	mux.HandleFunc("POST /api/login", handleLogin)
+	mux.HandleFunc("POST /api/logout", authMiddleware(handleLogout))
+	mux.HandleFunc("GET /api/auth/methods", handleAuthMethods)
 	mux.HandleFunc("GET /api/auth/hmac-nonce", authMiddleware(handleHMACNonce))
+	mux.HandleFunc("GET /api/me", authMiddleware(handleMe))
+	mux.HandleFunc("POST /api/me/2fa/setup", authMiddleware(handleTOTPSetup))
+	mux.HandleFunc("POST /api/me/2fa/enable", authMiddleware(handleTOTPEnable))
+	mux.HandleFunc("DELETE /api/me/2fa", authMiddleware(handleTOTPDisable))
+	mux.HandleFunc("GET /api/oidc/login", handleOIDCLogin)
+	mux.HandleFunc("GET /api/oidc/callback", handleOIDCCallback)
 	mux.HandleFunc("GET /api/share/{token}", handleGetSharedConfig)
 
 	// Peer Management
@@ -436,15 +475,13 @@ func main() {
 	// Admin - Config
 	mux.HandleFunc("GET /api/admin/config", authMiddleware(adminMiddleware(handleGetAdminConfig)))
 	mux.HandleFunc("POST /api/admin/config", authMiddleware(adminMiddleware(handleUpdateGlobalConfig)))
+	mux.HandleFunc("GET /api/admin/yaml", authMiddleware(adminMiddleware(handleGetYAMLConfig)))
+	mux.HandleFunc("POST /api/admin/yaml", authMiddleware(adminMiddleware(handleSaveYAMLConfig)))
+	mux.HandleFunc("POST /api/admin/restart", authMiddleware(adminMiddleware(handleRestartDaemon)))
 	mux.HandleFunc("GET /api/config/public", authMiddleware(handleGetPublicConfig))
 	mux.HandleFunc("GET /api/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "openapi.yaml")
 	})
-	mux.HandleFunc("GET /api/admin/yaml", authMiddleware(adminMiddleware(func(w http.ResponseWriter, r *http.Request) {
-		d, _ := os.ReadFile("uwg_canonical.yaml")
-		w.Header().Set("Content-Type", "text/plain")
-		w.Write(d)
-	})))
 	mux.HandleFunc("GET /api/admin/stats", authMiddleware(adminMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		resp, _ := uwgRequest("GET", "/v1/status", nil)
 		w.Header().Set("Content-Type", "application/json")
@@ -452,44 +489,7 @@ func main() {
 		resp.Body.Close()
 	})))
 
-	// Static Frontend & Redirect (Embedded)
-	distFS, _ := fs.Sub(frontendFS, "dist")
-	staticHandler := http.FileServer(http.FS(distFS))
-
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		isLocal := strings.HasPrefix(r.RemoteAddr, "127.0.0.1") || strings.HasPrefix(r.RemoteAddr, "[::1]")
-		if !isLocal && r.TLS == nil && !strings.HasPrefix(r.URL.Path, "/api") {
-			host, _, _ := net.SplitHostPort(r.Host)
-			if host == "" {
-				host = r.Host
-			}
-			http.Redirect(w, r, "https://"+host+r.RequestURI, http.StatusMovedPermanently)
-			return
-		}
-
-		path := r.URL.Path
-		if strings.HasPrefix(path, "/api") {
-			http.NotFound(w, r)
-			return
-		}
-
-		// Try to serve static file
-		f, err := distFS.Open(strings.TrimPrefix(path, "/"))
-		if err == nil {
-			f.Close()
-			staticHandler.ServeHTTP(w, r)
-			return
-		}
-		// Fallback to index.html for SPA
-		index, err := distFS.Open("index.html")
-		if err != nil {
-			http.Error(w, "Frontend assets missing", http.StatusNotFound)
-			return
-		}
-		defer index.Close()
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		io.Copy(w, index)
-	})
+	registerFrontendRoutes(mux)
 
 	startHTTPServer(mux)
 }
@@ -576,10 +576,12 @@ func initGlobalSettings() {
 		// Canonical YAML Toggles
 		"yaml_l3_forwarding":       "true",
 		"yaml_block_rfc":           "true",
-		"yaml_host_forward":        "true",
+		"yaml_host_forward":        "false",
 		"yaml_socks5_port":         "1080",
 		"yaml_inbound_transparent": "true",
 		"yaml_socks5_udp":          "true",
+		"custom_yaml_enabled":      "false",
+		"custom_yaml":              "",
 	}
 
 	if ep := os.Getenv("WG_PUBLIC_ENDPOINT"); ep != "" {
@@ -607,11 +609,7 @@ func getConfig(k string) string {
 // --- Middlewares ---
 func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		token := r.Header.Get("Authorization")
-		if strings.HasPrefix(token, "Bearer ") {
-			token = strings.TrimPrefix(token, "Bearer ")
-		}
-
+		token := bearerTokenFromRequest(r)
 		if token == "" {
 			log.Printf("Auth failed: Missing token for %s %s", r.Method, r.URL.Path)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -722,6 +720,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
+		TOTPCode string `json:"totp_code"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
@@ -741,10 +740,21 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	b := make([]byte, 32)
-	rand.Read(b)
-	token := base64.URLEncoding.EncodeToString(b)
-	gdb.Model(&user).Update("token", token)
+	if user.TOTPEnabled {
+		if strings.TrimSpace(req.TOTPCode) == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]interface{}{"requires_2fa": true})
+			return
+		}
+		if !verifyTOTPCode(decryptAtRest(user.TOTPSecret), req.TOTPCode, time.Now()) {
+			log.Printf("Login failed for user %q: invalid 2FA code", req.Username)
+			http.Error(w, "Invalid two-factor code", http.StatusUnauthorized)
+			return
+		}
+	}
+
+	token := issueUserToken(w, &user)
 
 	log.Printf("User %q logged in successfully", req.Username)
 	w.Header().Set("Content-Type", "application/json")
@@ -778,6 +788,11 @@ func handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 		StaticEndpoint      string     `json:"static_endpoint,omitempty"`
 		IsManualKey         bool       `json:"is_manual_key"`
 		ExpiresAt           *time.Time `json:"expires_at,omitempty"`
+		TrafficShaper       struct {
+			UploadBps     int64 `json:"upload_bps"`
+			DownloadBps   int64 `json:"download_bps"`
+			LatencyMillis int   `json:"latency_ms"`
+		} `json:"traffic_shaper"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
@@ -834,6 +849,9 @@ func handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 		StaticEndpoint:      req.StaticEndpoint,
 		ExpiresAt:           req.ExpiresAt,
 		Enabled:             true,
+		TrafficUploadBps:    req.TrafficShaper.UploadBps,
+		TrafficDownloadBps:  req.TrafficShaper.DownloadBps,
+		TrafficLatencyMs:    req.TrafficShaper.LatencyMillis,
 	}
 
 	if err := gdb.Create(&peer).Error; err != nil {
@@ -843,7 +861,7 @@ func handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sync directly to uwgsocks API
-	pushPeerToDaemon(peer.PublicKey, assignedIP, psk, req.Keepalive, req.StaticEndpoint)
+	pushPeerToDaemon(peer)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1036,6 +1054,11 @@ func handleUpdatePeer(w http.ResponseWriter, r *http.Request) {
 		Enabled        *bool      `json:"enabled"`
 		StaticEndpoint *string    `json:"static_endpoint"`
 		ExpiresAt      *time.Time `json:"expires_at"`
+		TrafficShaper  *struct {
+			UploadBps     int64 `json:"upload_bps"`
+			DownloadBps   int64 `json:"download_bps"`
+			LatencyMillis int   `json:"latency_ms"`
+		} `json:"traffic_shaper"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 
@@ -1057,12 +1080,16 @@ func handleUpdatePeer(w http.ResponseWriter, r *http.Request) {
 	if req.ExpiresAt != nil {
 		peer.ExpiresAt = req.ExpiresAt
 	}
+	if req.TrafficShaper != nil && isAdmin {
+		peer.TrafficUploadBps = req.TrafficShaper.UploadBps
+		peer.TrafficDownloadBps = req.TrafficShaper.DownloadBps
+		peer.TrafficLatencyMs = req.TrafficShaper.LatencyMillis
+	}
 
 	gdb.Save(&peer)
 
-	psk := decryptAtRest(peer.PresharedKey)
 	if peer.Enabled && (peer.ExpiresAt == nil || peer.ExpiresAt.After(time.Now())) {
-		pushPeerToDaemon(peer.PublicKey, peer.AssignedIPs, psk, peer.Keepalive, peer.StaticEndpoint)
+		pushPeerToDaemon(peer)
 	} else {
 		removePeerFromDaemon(peer.PublicKey)
 	}
@@ -1344,23 +1371,31 @@ func uwgRequest(method, path string, body io.Reader) (*http.Response, error) {
 	return uwgRequestWithContext(context.Background(), method, path, body)
 }
 
-func pushPeerToDaemon(pubKey, ips, psk string, keepalive int, endpoint string) {
+func pushPeerToDaemon(peer Peer) {
 	var allowed []string
-	for _, ip := range strings.Split(ips, ",") {
+	for _, ip := range strings.Split(peer.AssignedIPs, ",") {
 		allowed = append(allowed, strings.TrimSpace(ip))
 	}
 	payload := map[string]interface{}{
-		"public_key":  pubKey,
+		"public_key":  peer.PublicKey,
 		"allowed_ips": allowed,
 	}
-	if keepalive > 0 {
-		payload["persistent_keepalive"] = keepalive
+	if peer.Keepalive > 0 {
+		payload["persistent_keepalive"] = peer.Keepalive
 	}
+	psk := decryptAtRest(peer.PresharedKey)
 	if psk != "" {
 		payload["preshared_key"] = psk
 	}
-	if endpoint != "" {
-		payload["endpoint"] = endpoint
+	if peer.StaticEndpoint != "" {
+		payload["endpoint"] = peer.StaticEndpoint
+	}
+	if peer.TrafficUploadBps > 0 || peer.TrafficDownloadBps > 0 || peer.TrafficLatencyMs > 0 {
+		payload["traffic_shaper"] = map[string]interface{}{
+			"upload_bps":   peer.TrafficUploadBps,
+			"download_bps": peer.TrafficDownloadBps,
+			"latency_ms":   peer.TrafficLatencyMs,
+		}
 	}
 
 	b, _ := json.Marshal(payload)
@@ -1379,8 +1414,7 @@ func syncPeersToDaemon() {
 	var peers []Peer
 	gdb.Where("enabled = ? AND (expires_at IS NULL OR expires_at > ?)", true, time.Now()).Find(&peers)
 	for _, p := range peers {
-		psk := decryptAtRest(p.PresharedKey)
-		pushPeerToDaemon(p.PublicKey, p.AssignedIPs, psk, p.Keepalive, p.StaticEndpoint)
+		pushPeerToDaemon(p)
 	}
 }
 
@@ -1399,6 +1433,10 @@ func deepMerge(dst, src map[string]interface{}) {
 }
 
 func generateCanonicalYAML() {
+	os.WriteFile(resolvePath("uwg_canonical.yaml"), buildCanonicalYAMLBytes(true), 0644)
+}
+
+func buildCanonicalYAMLBytes(applyCustom bool) []byte {
 	port := 51820
 	mtu, _ := strconv.Atoi(getConfig("global_mtu"))
 
@@ -1440,16 +1478,6 @@ func generateCanonicalYAML() {
 		"relay": map[string]interface{}{
 			"enabled": getConfig("yaml_l3_forwarding") == "true",
 		},
-		"host_forward": map[string]interface{}{
-			"proxy": map[string]interface{}{
-				"enabled":     getConfig("yaml_host_forward") == "true",
-				"redirect_ip": "127.0.0.1",
-			},
-			"inbound": map[string]interface{}{
-				"enabled":     getConfig("yaml_host_forward") == "true",
-				"redirect_ip": "127.0.0.1",
-			},
-		},
 		"dns_server": map[string]interface{}{
 			"listen": getConfig("client_dns") + ":53",
 		},
@@ -1470,35 +1498,25 @@ func generateCanonicalYAML() {
 	deepMerge(config, managed)
 
 	d, _ := yaml.Marshal(config)
-	os.WriteFile(resolvePath("uwg_canonical.yaml"), d, 0644)
+	if applyCustom && getConfig("custom_yaml_enabled") == "true" {
+		custom := strings.TrimSpace(getConfig("custom_yaml"))
+		if custom != "" {
+			var parsed map[string]interface{}
+			if err := yaml.Unmarshal([]byte(custom), &parsed); err != nil {
+				log.Printf("Custom YAML override is invalid, keeping generated canonical YAML: %v", err)
+			} else {
+				d = []byte(custom)
+				if !bytes.HasSuffix(d, []byte("\n")) {
+					d = append(d, '\n')
+				}
+			}
+		}
+	}
+	return d
 }
 
 func startDaemon() {
-	time.Sleep(1 * time.Second)
-	var cmd *exec.Cmd
-
-	apiListen := *uwgsocksURL
-	if strings.HasPrefix(apiListen, "unix://") {
-		socketPath := strings.TrimPrefix(apiListen, "unix://")
-		if !filepath.IsAbs(socketPath) {
-			apiListen = "unix://" + resolvePath(socketPath)
-		}
+	if err := startManagedDaemon(); err != nil {
+		log.Printf("Failed to start daemon: %v", err)
 	}
-
-	if *systemMode {
-		// uwgkm flags
-		cmd = exec.Command(*daemonPath, "-config", resolvePath("uwg_canonical.yaml"), "-api-listen", apiListen)
-	} else {
-		// uwgsocks flags
-		cmd = exec.Command(*daemonPath, "--config", resolvePath("uwg_canonical.yaml"))
-	}
-
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	go func() {
-		log.Printf("Starting embedded daemon: %s...", *daemonPath)
-		if err := cmd.Run(); err != nil {
-			log.Printf("Daemon exited: %v", err)
-		}
-	}()
 }

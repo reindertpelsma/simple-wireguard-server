@@ -39,11 +39,21 @@ export async function request(path, options = {}) {
 }
 
 export const api = {
-  login: (username, password) => 
+  login: (username, password, totpCode = '') =>
     request('/api/login', {
       method: 'POST',
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, password, totp_code: totpCode }),
     }),
+
+  logout: () =>
+    request('/api/logout', {
+      method: 'POST',
+      redirectOnAuth: false,
+    }),
+
+  getAuthMethods: () => request('/api/auth/methods', { auth: false, redirectOnAuth: false }),
+
+  getMe: () => request('/api/me'),
 
   getPeers: () => request('/api/peers'),
 
@@ -68,6 +78,7 @@ export const api = {
 
   getPublicConfig: () => request('/api/config/public'),
   getAdminConfig: () => request('/api/admin/config'),
+  getYAMLConfig: () => request('/api/admin/yaml'),
 
   // Peer Updates
   updatePeer: (id, data) => 
@@ -109,6 +120,33 @@ export const api = {
     request('/api/admin/config', {
       method: 'POST',
       body: JSON.stringify(data),
+    }),
+
+  saveYAMLConfig: (data) =>
+    request('/api/admin/yaml', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  restartDaemon: () =>
+    request('/api/admin/restart', {
+      method: 'POST',
+    }),
+
+  setupTOTP: () =>
+    request('/api/me/2fa/setup', {
+      method: 'POST',
+    }),
+
+  enableTOTP: (code) =>
+    request('/api/me/2fa/enable', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }),
+
+  disableTOTP: () =>
+    request('/api/me/2fa', {
+      method: 'DELETE',
     }),
 
   createShareLink: (id, data) =>

@@ -37,13 +37,22 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
 
   const visibleTabs = tabs.filter((tab) => isAdmin || !tab.adminOnly);
 
+  const handleLogout = async () => {
+    try {
+      await api.logout();
+    } catch {
+      // The local session is cleared either way; logout should feel reliable.
+    }
+    onLogout();
+  };
+
   return (
     <div className="app-shell">
       <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-[var(--panel)]/95 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="space-y-2">
-              <span className="eyebrow">Rootless WireGuard Control</span>
+              <span className="eyebrow">WireGuard VPN Control</span>
               <div className="flex flex-wrap items-center gap-3">
                 <h1 className="text-2xl font-black tracking-tight sm:text-3xl">
                   Manage peers, policies, and bootstrap access from one console
@@ -63,7 +72,7 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
               </button>
               <button
                 type="button"
-                onClick={onLogout}
+                onClick={handleLogout}
                 className="ghost-button"
                 aria-label="Log out"
                 title="Log out"

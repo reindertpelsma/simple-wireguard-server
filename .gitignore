@@ -10,6 +10,7 @@ frontend/node_modules
 *.swp
 *.key
 *.db
+*.sock
 *.crt
 wgui_secrets.json
 uwg_canonical.yaml

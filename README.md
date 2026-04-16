@@ -15,8 +15,6 @@ Build a secure, rootless SD-WAN or VPN exit node in seconds.
    ./uwgsocks-ui -listen 0.0.0.0:8080
    ```
    On the very first startup, the server now prints a random admin password and generates a bootstrap WireGuard client config unless you disable it with `-generate-config=false`.
-
-   Usually the endpoint is set to 127.0.0.1:51820, you can change this to the real IP of your machine. On the website you can put your real external IP or DDNS hostname so that newly generated configs have the correct endpoint parameter.
 3. **Run with TURN (NAT Traversal):**
    ```bash
    ./uwgsocks-ui -turn-server my-turn.com:3478 -turn-user user -turn-pass pass
@@ -26,16 +24,18 @@ Build a secure, rootless SD-WAN or VPN exit node in seconds.
 ## Key Features
 
 - **Zero-Trust Security:** Client private keys never touch the server (encrypted in-browser via AES-GCM).
+- **NAT Traversal:** Built-in **TURN server support** for connectivity through strict firewalls/CGNAT.
+- **TCP MSS Clamping:** Automatic tunnel MTU enforcement for reliable TCP performance.
 - **SD-WAN Ready:** Group peers by user, manage firewall ACLs, and handle multi-user environments.
 - **Dual-Stack IP:** Automatically assigns IPv4 (/32) and IPv6 (/128) addresses to every peer.
-- **Rootless Wireguard without setup:** No system dependencies, no `/dev/net/tun`, no iptables jargon, just a simple server that exposes wireguard in userspace without mangling with any of the system networking. Support for both system-based Wireguard (kernel wireguard) and fully userspace wireguard (default)
 - **Configuration Merging:** Support for merging UI settings with a custom baseline YAML config.
+- **Runtime Traffic Shaping:** Admins can update per-peer upload/download/latency shapers while the daemon is running.
 - **Admin Dashboard:** Real-time metrics, handshakes, short-term traffic graphs, and global setting management.
+- **Hardened Login Surface:** Anonymous visitors receive a small standalone login page; the dashboard bundle is served after authentication.
+- **2FA and OIDC:** Local users can enable TOTP 2FA, and operators can enable OIDC login with CLI flags or environment variables.
 - **Bootstrap Friendly:** First-run random admin credentials plus optional `-generate-config` output for immediate SSH-only bring-up.
 - **Shareable Configs:** Create self-authenticated config links with optional expiry or one-time use; E2E links keep the decrypting nonce in the URL fragment.
 - **Responsive UI:** Mobile-friendly layout with both dark and light themes.
-- **TCP MSS Clamping:** Automatic tunnel MTU enforcement for reliable TCP performance.
-- **NAT Traversal:** Built-in **TURN server support** for connectivity through strict firewalls/CGNAT, see turn in userspace-wireguard-socks
 - **Secure by Default:** Argon2id hashing, encryption at rest for DB fields, and single-port HTTP/HTTPS multiplexing.
 
 ## Advanced Usage
@@ -50,6 +50,9 @@ Detailed technical documentation and API schemas are available in the [docs/](./
 - `-dsn`: Database connection string.
 - `-wg-url`: Connect to daemon via Unix socket (default) or HTTP.
 - `-generate-config`: Immediately mint and print a bootstrap WireGuard client config on startup. Defaults to enabled on the first boot.
+- `-frontend-dir`: Serve dashboard assets from a custom Vite `dist` directory instead of the embedded bundle.
+- `-extract-dist`: Extract the embedded dashboard bundle to a directory and exit.
+- `-oidc-issuer`, `-oidc-client-id`, `-oidc-client-secret`, `-oidc-redirect-url`: Enable OIDC sign-in. The same values can be supplied with `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and `OIDC_REDIRECT_URL`.
 
 ## License
 ISC License. See [LICENSE](./LICENSE) for details.

@@ -7,8 +7,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -162,15 +165,37 @@ func TestAPIPeerExpiration(t *testing.T) {
 func TestOIDCLogin(t *testing.T) {
 	setupTestDB(t)
 
-	// 1. Mock OIDC Server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	oldIssuer, oldClientID, oldClientSecret, oldRedirect := *oidcIssuer, *oidcClientID, *oidcClientSecret, *oidcRedirectURL
+	defer func() {
+		*oidcIssuer = oldIssuer
+		*oidcClientID = oldClientID
+		*oidcClientSecret = oldClientSecret
+		*oidcRedirectURL = oldRedirect
+	}()
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/.well-known/openid-configuration") {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprintf(w, `{"issuer": "%s", "authorization_endpoint": "%s/auth", "token_endpoint": "%s/token", "userinfo_endpoint": "%s/userinfo", "jwks_uri": "%s/jwks"}`,
-				r.Host, r.Host, r.Host, r.Host, r.Host)
+			fmt.Fprintf(w, `{"issuer": %q, "authorization_endpoint": %q, "token_endpoint": %q, "userinfo_endpoint": %q}`,
+				server.URL, server.URL+"/auth", server.URL+"/token", server.URL+"/userinfo")
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/token") {
+			if err := r.ParseForm(); err != nil {
+				t.Fatalf("parse token form: %v", err)
+			}
+			if r.Form.Get("client_id") != "ui-client" || r.Form.Get("client_secret") != "ui-secret" || r.Form.Get("code") != "code-123" {
+				t.Fatalf("unexpected token form: %v", r.Form)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"access_token":"access-123","token_type":"Bearer"}`)
 			return
 		}
 		if strings.HasSuffix(r.URL.Path, "/userinfo") {
+			if got := r.Header.Get("Authorization"); got != "Bearer access-123" {
+				t.Fatalf("unexpected userinfo authorization header: %q", got)
+			}
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprintf(w, `{"sub": "oidc-sub-123", "preferred_username": "oidc-user"}`)
 			return
@@ -179,26 +204,42 @@ func TestOIDCLogin(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// 2. Test user creation/mapping via OIDC stub
-	// (Note: full OIDC flow requires complex exchange, we test the internal mapping logic)
-	sub := "oidc-sub-123"
-	user := User{
-		Username:     "oidc-user",
-		OIDCProvider: "mock",
-		OIDCSubject:  &sub,
+	*oidcIssuer = server.URL
+	*oidcClientID = "ui-client"
+	*oidcClientSecret = "ui-secret"
+	*oidcRedirectURL = ""
+
+	req := httptest.NewRequest("GET", "http://ui.example/api/oidc/login", nil)
+	w := httptest.NewRecorder()
+	handleOIDCLogin(w, req)
+	if w.Code != http.StatusFound {
+		t.Fatalf("expected OIDC login redirect, got %d: %s", w.Code, w.Body.String())
 	}
-	if err := gdb.Create(&user).Error; err != nil {
-		t.Fatalf("failed to create OIDC user: %v", err)
+	location, err := url.Parse(w.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse redirect location: %v", err)
+	}
+	state := location.Query().Get("state")
+	if location.Path != "/auth" || state == "" {
+		t.Fatalf("unexpected OIDC redirect: %s", location.String())
 	}
 
-	// Verify second user with same sub fails (Unique constraint)
-	user2 := User{
-		Username:     "oidc-user-2",
-		OIDCProvider: "mock",
-		OIDCSubject:  &sub,
+	req = httptest.NewRequest("GET", "http://ui.example/api/oidc/callback?code=code-123&state="+url.QueryEscape(state), nil)
+	for _, cookie := range w.Result().Cookies() {
+		req.AddCookie(cookie)
 	}
-	if err := gdb.Create(&user2).Error; err == nil {
-		t.Error("expected unique constraint failure for OIDCSubject")
+	w = httptest.NewRecorder()
+	handleOIDCCallback(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected callback success, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var user User
+	if err := gdb.First(&user, "username = ?", "oidc-user").Error; err != nil {
+		t.Fatalf("expected OIDC user to be created: %v", err)
+	}
+	if user.Token == "" {
+		t.Fatalf("expected OIDC callback to issue a session token")
 	}
 }
 
@@ -223,6 +264,223 @@ func TestACLManagement(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Errorf("expected 201, got %d", w.Code)
 	}
+}
+
+func TestLoginWithTOTP(t *testing.T) {
+	setupTestDB(t)
+	hash, _ := hashPassword("password")
+	secret := "JBSWY3DPEHPK3PXP"
+	user := User{
+		Username:     "totp-user",
+		PasswordHash: hash,
+		TOTPSecret:   encryptAtRest(secret),
+		TOTPEnabled:  true,
+		MaxConfigs:   5,
+	}
+	if err := gdb.Create(&user).Error; err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]string{"username": "totp-user", "password": "password"})
+	req := httptest.NewRequest("POST", "/api/login", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	handleLogin(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 for missing 2FA, got %d: %s", w.Code, w.Body.String())
+	}
+
+	code, err := totpCode(secret, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = json.Marshal(map[string]string{"username": "totp-user", "password": "password", "totp_code": code})
+	req = httptest.NewRequest("POST", "/api/login", bytes.NewReader(body))
+	w = httptest.NewRecorder()
+	handleLogin(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 after valid 2FA, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(w.Result().Cookies()) == 0 {
+		t.Fatalf("expected login to set a session cookie")
+	}
+}
+
+func TestYAMLOverrideIsStoredAndWritten(t *testing.T) {
+	setupTestDB(t)
+	oldDataDir := *dataDir
+	*dataDir = t.TempDir()
+	defer func() { *dataDir = oldDataDir }()
+
+	custom := "api:\n  listen: unix:///tmp/custom.sock\nwireguard:\n  addresses:\n    - 100.64.77.1/24\n"
+	body, _ := json.Marshal(map[string]interface{}{
+		"enabled": true,
+		"custom":  custom,
+	})
+	req := httptest.NewRequest("POST", "/api/admin/yaml", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	handleSaveYAMLConfig(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 saving YAML, got %d: %s", w.Code, w.Body.String())
+	}
+	if getConfig("custom_yaml_enabled") != "true" || getConfig("custom_yaml") != custom {
+		t.Fatalf("custom YAML settings were not persisted")
+	}
+	data, err := os.ReadFile(resolvePath("uwg_canonical.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != custom {
+		t.Fatalf("expected custom YAML file, got:\n%s", string(data))
+	}
+
+	req = httptest.NewRequest("GET", "/api/admin/yaml", nil)
+	w = httptest.NewRecorder()
+	handleGetYAMLConfig(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 fetching YAML, got %d", w.Code)
+	}
+	var response yamlConfigResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.Enabled || response.Custom != custom || response.Effective != custom {
+		t.Fatalf("unexpected YAML response: %+v", response)
+	}
+}
+
+func TestPeerTrafficShaperUpdatePushesDaemonAPI(t *testing.T) {
+	setupTestDB(t)
+	admin, _ := createTestUser(t, "shaper-admin", true)
+
+	var pushed map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/peers" {
+			t.Fatalf("unexpected daemon request: %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&pushed); err != nil {
+			t.Fatalf("decode daemon payload: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	oldURL := *uwgsocksURL
+	*uwgsocksURL = server.URL
+	defer func() { *uwgsocksURL = oldURL }()
+
+	peer := Peer{
+		UserID:       admin.ID,
+		Name:         "limited",
+		PublicKey:    "limited-pub",
+		AssignedIPs:  "100.64.0.44/32",
+		PresharedKey: encryptAtRest("psk"),
+		Enabled:      true,
+	}
+	if err := gdb.Create(&peer).Error; err != nil {
+		t.Fatalf("create peer: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"traffic_shaper": map[string]interface{}{
+			"upload_bps":   1200000,
+			"download_bps": 3400000,
+			"latency_ms":   25,
+		},
+	})
+	req := httptest.NewRequest("PATCH", "/api/peers/"+fmt.Sprint(peer.ID), bytes.NewReader(body))
+	req.SetPathValue("id", fmt.Sprint(peer.ID))
+	req.Header.Set("X-User-Id", fmt.Sprint(admin.ID))
+	req.Header.Set("X-Is-Admin", "true")
+	w := httptest.NewRecorder()
+	handleUpdatePeer(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 updating shaper, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var saved Peer
+	gdb.First(&saved, peer.ID)
+	if saved.TrafficUploadBps != 1200000 || saved.TrafficDownloadBps != 3400000 || saved.TrafficLatencyMs != 25 {
+		t.Fatalf("shaper was not saved: %+v", saved)
+	}
+	shaper, ok := pushed["traffic_shaper"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("daemon payload missing traffic_shaper: %+v", pushed)
+	}
+	if shaper["upload_bps"].(float64) != 1200000 || shaper["download_bps"].(float64) != 3400000 || shaper["latency_ms"].(float64) != 25 {
+		t.Fatalf("unexpected daemon shaper payload: %+v", shaper)
+	}
+}
+
+func TestFrontendDistIsCookieGated(t *testing.T) {
+	setupTestDB(t)
+	_, token := createTestUser(t, "frontend-user", false)
+
+	mux := http.NewServeMux()
+	registerFrontendRoutes(mux)
+
+	req := httptest.NewRequest("GET", "/app", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusFound || w.Header().Get("Location") != "/login" {
+		t.Fatalf("expected anonymous /app redirect to /login, got %d location=%q", w.Code, w.Header().Get("Location"))
+	}
+
+	req = httptest.NewRequest("GET", "/login", nil)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Only the lock is public") {
+		t.Fatalf("expected lightweight login page, got %d", w.Code)
+	}
+
+	req = httptest.NewRequest("GET", "/app", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected authenticated /app to serve frontend, got %d: %s", w.Code, w.Body.String())
+	}
+
+	asset := firstDistJSAsset(t)
+	req = httptest.NewRequest("GET", "http://ui.example/"+asset, nil)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusFound || w.Header().Get("Location") != "/login" {
+		t.Fatalf("expected anonymous dashboard asset redirect, got %d location=%q", w.Code, w.Header().Get("Location"))
+	}
+
+	req = httptest.NewRequest("GET", "http://ui.example/"+asset, nil)
+	req.Header.Set("Referer", "http://ui.example/config/share-token")
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected shared config asset to load with config referer, got %d", w.Code)
+	}
+}
+
+func firstDistJSAsset(t *testing.T) string {
+	t.Helper()
+	dist, err := frontendDist()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found string
+	err = fs.WalkDir(dist, "assets", func(name string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() && strings.HasSuffix(name, ".js") {
+			found = name
+			return fs.SkipAll
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found == "" {
+		t.Fatal("no frontend JS asset found in dist")
+	}
+	return found
 }
 
 func TestGetPeerPrivateAllowsServerManagedKeysWithoutNonce(t *testing.T) {
