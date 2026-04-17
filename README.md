@@ -15,7 +15,7 @@ Build a secure, rootless SD-WAN or VPN exit node in seconds.
    chmod +x uwgsocks-ui uwgsocks uwgkm
    ```
 
-   Or compile from source
+   Or compile from source. Ensure you clone [https://github.com/reindertpelsma/userspace-wireguard-socks](https://github.com/reindertpelsma/userspace-wireguard-socks)
    ```bash
    ./compile.sh
    ```
