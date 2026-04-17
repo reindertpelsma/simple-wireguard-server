@@ -61,10 +61,11 @@ var (
 	tlsKey        = flag.String("tls-key", "", "Path to TLS key")
 
 	// TURN settings from CLI
-	turnServer = flag.String("turn-server", "", "TURN server (host:port)")
-	turnUser   = flag.String("turn-user", "", "TURN username")
-	turnPass   = flag.String("turn-pass", "", "TURN password")
-	turnRealm  = flag.String("turn-realm", "", "TURN realm")
+	turnServer             = flag.String("turn-server", "", "TURN server (host:port)")
+	turnUser               = flag.String("turn-user", "", "TURN username")
+	turnPass               = flag.String("turn-pass", "", "TURN password")
+	turnRealm              = flag.String("turn-realm", "", "TURN realm")
+	turnIncludeWGPublicKey = flag.Bool("turn-include-wg-public-key", false, "Append an encrypted WireGuard public key to the TURN username")
 
 	baselineConfig = flag.String("baseline-config", "", "Path to baseline YAML configuration to merge with UI settings")
 	generateConfig = flag.Bool("generate-config", false, "Generate and print a bootstrap WireGuard client config on startup")
@@ -396,6 +397,13 @@ func main() {
 	}
 	if *turnRealm == "" {
 		*turnRealm = os.Getenv("TURN_REALM")
+	}
+	if !*turnIncludeWGPublicKey {
+		if v := os.Getenv("TURN_INCLUDE_WG_PUBLIC_KEY"); v != "" {
+			if parsed, err := strconv.ParseBool(v); err == nil {
+				*turnIncludeWGPublicKey = parsed
+			}
+		}
 	}
 	os.MkdirAll(*dataDir, 0755)
 	rand.Read(hmacSecret)
@@ -1485,10 +1493,11 @@ func buildCanonicalYAMLBytes(applyCustom bool) []byte {
 
 	if *turnServer != "" {
 		managed["turn"] = map[string]interface{}{
-			"server":   *turnServer,
-			"username": *turnUser,
-			"password": *turnPass,
-			"realm":    *turnRealm,
+			"server":                *turnServer,
+			"username":              *turnUser,
+			"password":              *turnPass,
+			"realm":                 *turnRealm,
+			"include_wg_public_key": *turnIncludeWGPublicKey,
 		}
 	}
 

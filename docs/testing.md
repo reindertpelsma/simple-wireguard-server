@@ -3,7 +3,7 @@
 
 # Testing And Security Plan
 
-This project is intentionally tested without root, `/dev/net/tun`, public Internet dependencies, or container privileges. The tests run WireGuard, gVisor netstack, SOCKS5/HTTP proxy paths, transparent forwarding, DNS, relay, and API behavior as normal Go processes.
+This project is intentionally tested without root, `/dev/net/tun`, public Internet dependencies, or container privileges. The tests run WireGuard, gVisor netstack, SOCKS5/HTTP proxy paths, transparent forwarding, DNS, relay, UI-server auth/config flows, and API behavior as normal processes.
 
 ## Threat Model
 
@@ -26,6 +26,14 @@ go test ./...
 go test -race ./internal/config ./internal/engine ./tests/malicious ./tests/preload
 go test ./internal/engine -run '^$' -bench BenchmarkLoopbackSOCKSThroughput -benchtime=3x
 ./scripts/iperf_loopback.sh
+
+cd uwgsocks-ui
+go test ./...
+
+cd frontend
+npx vitest run
+npm run lint
+npm run build
 ```
 
 The main suite covers:
@@ -43,15 +51,21 @@ The main suite covers:
 - Host forwarding defaults and virtual `Address=` subnet rejection.
 - Reserved IPv4 and IPv6 tunnel-address filtering.
 - Source IP enforcement against malicious WireGuard peers.
-- Relay forwarding allow and deny ACL behavior.
+- Relay forwarding allow and deny ACL behavior, including stateful TCP, UDP,
+  ICMP echo, ICMP error, IPv6, expiry, and conntrack limit cases.
 - API peer, ACL, status, ping, and runtime forward operations.
 - API mutation while traffic is flowing with many ACL rules.
-- Raw socket API TCP, UDP, UDP reconnect/disconnect, TCP listener/accept, DNS frame, and malformed-frame behavior.
+- Raw socket API TCP, UDP, ICMP, UDP reconnect/disconnect, TCP listener/accept,
+  DNS frame, and malformed-frame behavior.
 - Linux LD_PRELOAD managed-fd proof path for connected TCP, connected UDP, unconnected UDP, TCP listener accept, duplicated fds, fork inheritance, selected exec inheritance, and malicious manager-input rejection through `uwgfdproxy`.
 - DNS-over-WireGuard resolution and tunnel-hosted DNS transaction behavior.
 - Malformed parser and packet fuzz seeds.
 - Packet loss, jitter, tail-drop-like queue overflow, and multi-stream transfer.
-- Connection table overflow grace and transparent TCP memory budget behavior.
+- Connection table overflow grace, per-peer connection-table isolation,
+  transparent TCP memory budget behavior, and traffic-shaper TCP pacing.
+- `uwgsocks-ui` login, cookie-gated dashboard serving, public shared-config
+  asset access, TOTP 2FA, OIDC callback flow, YAML override persistence,
+  daemon restart wiring, and live peer traffic-shaper propagation.
 
 `scripts/iperf_loopback.sh` builds `uwgsocks` when needed, writes temporary
 demo WireGuard configs, starts two binaries, exposes an iperf3 server through a
@@ -96,4 +110,6 @@ Before calling this production-safe, ask another engineer to review:
 - DNS fallback behavior and transaction caps.
 - WireGuard peer update and `AllowedIPs` cache update path.
 - Transparent TCP backpressure and global memory limits.
-- Relay ACL behavior and directional reply rules.
+- Relay ACL behavior, stateless directional mode, and stateful reply tracking.
+- UI auth surfaces: public `login.html`, session cookie handling, TOTP secret
+  encryption at rest, OIDC user mapping, and admin-only restart/YAML controls.
