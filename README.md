@@ -6,16 +6,25 @@ Build a secure, rootless SD-WAN or VPN exit node in seconds.
 
 ## Quick Start (20 Seconds)
 
-1. **Build Everything:**
+1. **Build or download:**
+   Download:
+   ```bash
+   wget https://github.com/reindertpelsma/simple-wireguard-server/releases/download/0.1/uwgsocks-ui
+   wget https://github.com/reindertpelsma/userspace-wireguard-socks/releases/download/0.2/uwgsocks
+   wget https://github.com/reindertpelsma/simple-wireguard-server/releases/download/0.1/uwgkm #If you want to use Kernel Wireguard, requires root
+   chmod +x uwgsocks-ui uwgsocks uwgkm
+   ```
+
+   Or compile from source
    ```bash
    ./compile.sh
    ```
-2. **Run (Default SQLite + Auto-discovery):**
+3. **Run (Default SQLite + Auto-discovery):**
    ```bash
    ./uwgsocks-ui -listen 0.0.0.0:8080
    ```
    On the very first startup, the server now prints a random admin password and generates a bootstrap WireGuard client config unless you disable it with `-generate-config=false`.
-3. **Docker**
+4. **Docker**
    No special capabilities required, this simple wireguard server works even in the most restrictive containers
 
    ```bash
@@ -28,6 +37,7 @@ Build a secure, rootless SD-WAN or VPN exit node in seconds.
 
 - **Admin Dashboard:** Real-time metrics, handshakes, short-term traffic graphs, and global setting management.
 - **Responsive UI:** Mobile-friendly layout with both dark and light themes.
+- **No system permissions or docker required** Setup a one-click wireguard server with a nice UI on any Linux machine under any account. Supports both Kernel wireguard and userspace implmentation.
 - **2FA and OIDC:** Local users can enable TOTP 2FA, and operators can enable OIDC login with CLI flags or environment variables.
 - **SD-WAN Ready:** Group peers by user, manage firewall ACLs, and handle multi-user environments.
 - **IPv6 support:** First class support for IPv6
