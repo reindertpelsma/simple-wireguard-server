@@ -45,9 +45,10 @@ Still intentionally limited:
 - ICMP support is for outbound unprivileged ping-style datagram sockets:
   `socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP)` and the IPv6 equivalent. Raw
   ICMP sockets and listener-style ICMP sockets are not exposed.
-- the preload wrapper is still a proof layer, not a production libc shim:
-  `sendmsg`/`recvmsg`, libc resolver interposition, full `select`/`epoll`
-  shimming, and some uncommon socket options are not implemented
+- the preload/ptrace wrapper is still a proof layer, not a production libc
+  shim: `sendmsg`/`recvmsg`/`sendmmsg`/`recvmmsg` are covered for TCP and UDP,
+  but full `select`/`epoll` shimming and some uncommon socket options are not
+  implemented
 - the managed-fd optimization is local-only; remote HTTP `/uwg/socket` users
   need a local fd bridge daemon such as `uwgfdproxy`
 
@@ -313,8 +314,8 @@ Recommended support order:
    UDP listener mode
 4. TCP listener `accept` with manager `ATTACH`
 5. libc DNS interposition through the `dns` action
-6. `sendmsg`/`recvmsg`, full resolver interposition, and broader fd API
-   coverage for production socksify-style use
+6. full resolver interposition, broader fd API coverage, and wider event-loop
+   shimming for production socksify-style use
 
 Avoid ptrace as the default transport. It is useful for diagnostics, but it is
 slower, architecture-sensitive, awkward with threads and signals, and often
