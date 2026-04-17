@@ -1,4 +1,4 @@
-# uwgsocks-ui
+# Simple wireguard server
 
 A wireguard server manager without system installation requirements, based on [uwgsocks](https://github.com/reindertpelsma/userspace-wireguard-socks)
 
