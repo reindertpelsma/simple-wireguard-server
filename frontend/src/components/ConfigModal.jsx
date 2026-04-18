@@ -58,6 +58,7 @@ export default function ConfigModal({ peer, onClose }) {
           mtu: globalConfig.global_mtu,
           serverPublicKey: globalConfig.server_pubkey,
           endpoint: globalConfig.endpoints_visible === 'false' && !peer.is_owner ? 'HIDDEN' : globalConfig.server_endpoint,
+          transport: globalConfig.default_transport,
           presharedKey,
           keepalive: peer.keepalive,
         });

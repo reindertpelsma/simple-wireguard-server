@@ -35,6 +35,7 @@ type sharedConfigResponse struct {
 	IsE2E               bool       `json:"is_e2e"`
 	ServerPublicKey     string     `json:"server_public_key"`
 	ServerEndpoint      string     `json:"server_endpoint"`
+	DefaultTransport    string     `json:"default_transport,omitempty"`
 	ClientDNS           string     `json:"client_dns"`
 	MTU                 string     `json:"mtu"`
 	PresharedKey        string     `json:"preshared_key,omitempty"`
@@ -143,19 +144,20 @@ func handleGetSharedConfig(w http.ResponseWriter, r *http.Request) {
 
 	peer := link.Peer
 	response := sharedConfigResponse{
-		PeerName:        peer.Name,
-		DownloadName:    configDownloadName(peer.Name),
-		PublicKey:       peer.PublicKey,
-		AssignedIPs:     peer.AssignedIPs,
-		Keepalive:       peer.Keepalive,
-		IsE2E:           peer.IsE2E,
-		ServerPublicKey: getConfig("server_pubkey"),
-		ServerEndpoint:  getConfig("server_endpoint"),
-		ClientDNS:       getConfig("client_dns"),
-		MTU:             getConfig("global_mtu"),
-		OneUse:          link.OneUse,
-		ExpiresAt:       link.ExpiresAt,
-		PresharedKey:    decryptAtRest(peer.PresharedKey),
+		PeerName:         peer.Name,
+		DownloadName:     configDownloadName(peer.Name),
+		PublicKey:        peer.PublicKey,
+		AssignedIPs:      peer.AssignedIPs,
+		Keepalive:        peer.Keepalive,
+		IsE2E:            peer.IsE2E,
+		ServerPublicKey:  getConfig("server_pubkey"),
+		ServerEndpoint:   resolvedServerEndpoint(),
+		DefaultTransport: resolveDefaultTransportNameUI(),
+		ClientDNS:        getConfig("client_dns"),
+		MTU:              getConfig("global_mtu"),
+		OneUse:           link.OneUse,
+		ExpiresAt:        link.ExpiresAt,
+		PresharedKey:     decryptAtRest(peer.PresharedKey),
 	}
 
 	if peer.IsE2E {

@@ -5,6 +5,7 @@ export function buildWireGuardConfig({
   mtu,
   serverPublicKey,
   endpoint,
+  transport,
   presharedKey,
   keepalive,
 }) {
@@ -20,6 +21,10 @@ export function buildWireGuardConfig({
     `Endpoint = ${endpoint}`,
     'AllowedIPs = 0.0.0.0/0, ::/0',
   ];
+
+  if (transport) {
+    lines.push(`Transport = ${transport}`);
+  }
 
   if (presharedKey) {
     lines.push(`PresharedKey = ${presharedKey}`);

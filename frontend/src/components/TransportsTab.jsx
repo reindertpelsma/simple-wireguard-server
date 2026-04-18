@@ -2,12 +2,12 @@ import { useEffect, useState } from 'react';
 import { ChevronDown, ChevronUp, Edit3, Plus, Radio, Trash2 } from 'lucide-react';
 import { api } from '../lib/api';
 
-const BASE_OPTIONS = ['udp', 'tcp', 'tls', 'dtls', 'http', 'https', 'quic', 'quic-ws', 'url'];
-const PROXY_TYPES = ['', 'socks5', 'http', 'turn'];
+const BASE_OPTIONS = ['udp', 'tcp', 'tls', 'dtls', 'http', 'https', 'quic', 'quic-ws', 'turn', 'url'];
+const PROXY_TYPES = ['', 'socks5', 'http'];
 
 const EMPTY_FORM = {
   name: '',
-  base: 'tcp',
+  base: 'udp',
   listen: false,
   listen_port: '',
   listen_addrs: '',
@@ -15,6 +15,14 @@ const EMPTY_FORM = {
   ws_path: '',
   connect_host: '',
   host_header: '',
+  turn_server: '',
+  turn_username: '',
+  turn_password: '',
+  turn_realm: '',
+  turn_protocol: 'udp',
+  turn_no_create_permission: false,
+  turn_include_wg_public_key: false,
+  turn_permissions: '',
   tls_cert_file: '',
   tls_key_file: '',
   tls_ca_file: '',
@@ -35,8 +43,23 @@ function needsTLS(base) {
   return ['tls', 'dtls', 'https', 'quic', 'quic-ws', 'url'].includes(base);
 }
 
+function needsTurn(base) {
+  return base === 'turn';
+}
+
+function turnUsesTLS(base, protocol) {
+  return base === 'turn' && ['tls', 'dtls'].includes(protocol);
+}
+
 function needsWebSocket(base) {
   return ['http', 'https', 'quic', 'quic-ws', 'url'].includes(base);
+}
+
+function connectionBadge(transport) {
+  if (transport.connected) {
+    return { label: 'connected', className: 'rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900 dark:text-green-300' };
+  }
+  return { label: 'idle', className: 'rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700 dark:bg-gray-700 dark:text-gray-300' };
 }
 
 export default function TransportsTab() {
@@ -50,14 +73,27 @@ export default function TransportsTab() {
   async function fetchTransports() {
     try {
       const data = await api.getTransports();
-      setTransports(data || []);
+      return data || [];
     } catch (err) {
       console.error(err);
+      return [];
     }
   }
 
   useEffect(() => {
-    fetchTransports();
+    let cancelled = false;
+
+    async function loadTransports() {
+      const data = await fetchTransports();
+      if (!cancelled) {
+        setTransports(data);
+      }
+    }
+
+    loadTransports();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
@@ -75,10 +111,10 @@ export default function TransportsTab() {
       } else {
         await api.createTransport(payload);
       }
+      setTransports(await fetchTransports());
       setForm(EMPTY_FORM);
       setShowForm(false);
       setEditId(null);
-      fetchTransports();
     } catch (err) {
       setError(err.message);
     }
@@ -87,7 +123,7 @@ export default function TransportsTab() {
   const handleEdit = (t) => {
     setForm({
       name: t.name ?? '',
-      base: t.base ?? 'tcp',
+      base: t.base ?? 'udp',
       listen: t.listen ?? false,
       listen_port: t.listen_port ? String(t.listen_port) : '',
       listen_addrs: t.listen_addrs ?? '',
@@ -95,6 +131,14 @@ export default function TransportsTab() {
       ws_path: t.ws_path ?? '',
       connect_host: t.connect_host ?? '',
       host_header: t.host_header ?? '',
+      turn_server: t.turn_server ?? '',
+      turn_username: t.turn_username ?? '',
+      turn_password: t.turn_password ?? '',
+      turn_realm: t.turn_realm ?? '',
+      turn_protocol: t.turn_protocol ?? 'udp',
+      turn_no_create_permission: t.turn_no_create_permission ?? false,
+      turn_include_wg_public_key: t.turn_include_wg_public_key ?? false,
+      turn_permissions: t.turn_permissions ?? '',
       tls_cert_file: t.tls_cert_file ?? '',
       tls_key_file: t.tls_key_file ?? '',
       tls_ca_file: t.tls_ca_file ?? '',
@@ -113,7 +157,7 @@ export default function TransportsTab() {
     if (!confirm('Delete this transport?')) return;
     try {
       await api.deleteTransport(id);
-      fetchTransports();
+      setTransports(await fetchTransports());
     } catch (err) {
       alert(err.message);
     }
@@ -201,6 +245,50 @@ export default function TransportsTab() {
             </label>
           )}
 
+          {needsTurn(form.base) && (
+            <details className="rounded border border-gray-200 p-3 dark:border-gray-600" open>
+              <summary className="cursor-pointer text-sm font-medium text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200">
+                TURN Settings
+              </summary>
+              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label className={LABEL}>
+                  TURN Server *
+                  <input className={INPUT} value={form.turn_server} onChange={(e) => set('turn_server', e.target.value)} placeholder="turn.example.com:3478" />
+                </label>
+                <label className={LABEL}>
+                  TURN Protocol
+                  <select className={SELECT} value={form.turn_protocol} onChange={(e) => set('turn_protocol', e.target.value)}>
+                    {['udp', 'tcp', 'tls', 'dtls'].map((protocol) => <option key={protocol} value={protocol}>{protocol}</option>)}
+                  </select>
+                </label>
+                <label className={LABEL}>
+                  Username
+                  <input className={INPUT} value={form.turn_username} onChange={(e) => set('turn_username', e.target.value)} placeholder="optional" />
+                </label>
+                <label className={LABEL}>
+                  Password
+                  <input type="password" className={INPUT} value={form.turn_password} onChange={(e) => set('turn_password', e.target.value)} placeholder="optional" />
+                </label>
+                <label className={LABEL}>
+                  Realm
+                  <input className={INPUT} value={form.turn_realm} onChange={(e) => set('turn_realm', e.target.value)} placeholder="optional" />
+                </label>
+                <label className={LABEL}>
+                  Permissions
+                  <input className={INPUT} value={form.turn_permissions} onChange={(e) => set('turn_permissions', e.target.value)} placeholder="ip:port, ip:port" />
+                </label>
+                <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                  <input type="checkbox" checked={form.turn_no_create_permission} onChange={(e) => set('turn_no_create_permission', e.target.checked)} className="h-4 w-4" />
+                  Skip CREATE_PERMISSION
+                </label>
+                <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                  <input type="checkbox" checked={form.turn_include_wg_public_key} onChange={(e) => set('turn_include_wg_public_key', e.target.checked)} className="h-4 w-4" />
+                  Include WireGuard public key in TURN username
+                </label>
+              </div>
+            </details>
+          )}
+
           {/* WebSocket options */}
           {needsWebSocket(form.base) && (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -220,7 +308,7 @@ export default function TransportsTab() {
           )}
 
           {/* TLS settings */}
-          {needsTLS(form.base) && (
+          {(needsTLS(form.base) || turnUsesTLS(form.base, form.turn_protocol)) && (
             <details className="rounded border border-gray-200 p-3 dark:border-gray-600">
               <summary className="cursor-pointer text-sm font-medium text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200">
                 TLS Settings
@@ -291,9 +379,24 @@ export default function TransportsTab() {
                   </button>
                   <span className="font-mono text-sm font-medium text-gray-900 dark:text-gray-100">{t.name}</span>
                   <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900 dark:text-blue-300">{t.base}</span>
+                  {t.base === 'turn' && t.turn_protocol && (
+                    <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300">
+                      turn/{t.turn_protocol}
+                    </span>
+                  )}
                   {t.listen && (
                     <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900 dark:text-green-300">
                       listener{t.listen_port ? ` :${t.listen_port}` : ''}
+                    </span>
+                  )}
+                  {(t.base === 'turn' || t.connected || t.active_sessions > 0) && (
+                    <span className={connectionBadge(t).className}>
+                      {connectionBadge(t).label}
+                    </span>
+                  )}
+                  {typeof t.active_sessions === 'number' && t.active_sessions > 0 && (
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                      {t.active_sessions} sessions
                     </span>
                   )}
                   {t.proxy_type && t.proxy_type !== 'none' && (
@@ -319,10 +422,22 @@ export default function TransportsTab() {
                   {t.ws_path && <><dt className="text-gray-500 dark:text-gray-400">Path</dt><dd className="text-gray-800 dark:text-gray-200">{t.ws_path}</dd></>}
                   {t.connect_host && <><dt className="text-gray-500 dark:text-gray-400">Connect Host</dt><dd className="text-gray-800 dark:text-gray-200">{t.connect_host}</dd></>}
                   {t.host_header && <><dt className="text-gray-500 dark:text-gray-400">Host Header</dt><dd className="text-gray-800 dark:text-gray-200">{t.host_header}</dd></>}
+                  {t.turn_server && <><dt className="text-gray-500 dark:text-gray-400">TURN Server</dt><dd className="text-gray-800 dark:text-gray-200 col-span-2">{t.turn_server}</dd></>}
+                  {t.turn_protocol && t.base === 'turn' && <><dt className="text-gray-500 dark:text-gray-400">TURN Protocol</dt><dd className="text-gray-800 dark:text-gray-200">{t.turn_protocol}</dd></>}
+                  {t.turn_realm && <><dt className="text-gray-500 dark:text-gray-400">TURN Realm</dt><dd className="text-gray-800 dark:text-gray-200">{t.turn_realm}</dd></>}
+                  {t.turn_permissions && <><dt className="text-gray-500 dark:text-gray-400">TURN Permissions</dt><dd className="text-gray-800 dark:text-gray-200 col-span-2">{t.turn_permissions}</dd></>}
+                  {t.turn_no_create_permission && <><dt className="text-gray-500 dark:text-gray-400">TURN Mode</dt><dd className="text-gray-800 dark:text-gray-200">no create_permission</dd></>}
+                  {t.turn_include_wg_public_key && <><dt className="text-gray-500 dark:text-gray-400">TURN Username</dt><dd className="text-gray-800 dark:text-gray-200">includes WireGuard public key</dd></>}
                   {t.tls_cert_file && <><dt className="text-gray-500 dark:text-gray-400">Cert</dt><dd className="text-gray-800 dark:text-gray-200 col-span-2">{t.tls_cert_file}</dd></>}
                   {t.tls_ca_file && <><dt className="text-gray-500 dark:text-gray-400">CA</dt><dd className="text-gray-800 dark:text-gray-200 col-span-2">{t.tls_ca_file}</dd></>}
                   {t.tls_verify_peer && <><dt className="text-gray-500 dark:text-gray-400">TLS</dt><dd className="text-gray-800 dark:text-gray-200">verify peer</dd></>}
                   {t.proxy_server && <><dt className="text-gray-500 dark:text-gray-400">Proxy</dt><dd className="text-gray-800 dark:text-gray-200">{t.proxy_type} {t.proxy_server}</dd></>}
+                  {t.connected && <><dt className="text-gray-500 dark:text-gray-400">Connected</dt><dd className="text-gray-800 dark:text-gray-200">yes</dd></>}
+                  {t.carrier_protocol && <><dt className="text-gray-500 dark:text-gray-400">Carrier</dt><dd className="text-gray-800 dark:text-gray-200">{t.carrier_protocol}</dd></>}
+                  {t.carrier_local_addr && <><dt className="text-gray-500 dark:text-gray-400">Local Addr</dt><dd className="text-gray-800 dark:text-gray-200 col-span-2">{t.carrier_local_addr}</dd></>}
+                  {t.carrier_remote_addr && <><dt className="text-gray-500 dark:text-gray-400">Remote Addr</dt><dd className="text-gray-800 dark:text-gray-200 col-span-2">{t.carrier_remote_addr}</dd></>}
+                  {t.relay_addr && <><dt className="text-gray-500 dark:text-gray-400">Relay Addr</dt><dd className="text-gray-800 dark:text-gray-200 col-span-2">{t.relay_addr}</dd></>}
+                  {typeof t.active_sessions === 'number' && <><dt className="text-gray-500 dark:text-gray-400">Active Sessions</dt><dd className="text-gray-800 dark:text-gray-200">{t.active_sessions}</dd></>}
                 </dl>
               )}
             </div>

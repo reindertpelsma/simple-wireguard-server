@@ -188,6 +188,11 @@ type Peer struct {
 	HasHandshake          bool               `gorm:"-" json:"has_handshake"`
 	HasPrivateKeyMaterial bool               `gorm:"-" json:"has_private_key_material"`
 	TrafficHistory        []PeerTrafficPoint `gorm:"-" json:"traffic_history,omitempty"`
+	TransportName         string             `gorm:"-" json:"transport_name,omitempty"`
+	TransportState        string             `gorm:"-" json:"transport_state,omitempty"`
+	TransportEndpoint     string             `gorm:"-" json:"transport_endpoint,omitempty"`
+	TransportSourceAddr   string             `gorm:"-" json:"transport_source_addr,omitempty"`
+	TransportCarrierAddr  string             `gorm:"-" json:"transport_carrier_remote_addr,omitempty"`
 }
 
 type GlobalConfig struct {
@@ -211,14 +216,23 @@ type ACLRule struct {
 type TransportConfig struct {
 	ID          uint   `gorm:"primaryKey" json:"id"`
 	Name        string `gorm:"uniqueIndex;not null" json:"name"`
-	Base        string `gorm:"not null" json:"base"`       // udp|tcp|tls|dtls|http|https|quic|quic-ws|url
-	Listen      bool   `gorm:"default:false" json:"listen"` // enable listener
-	ListenPort  int    `gorm:"default:0" json:"listen_port,omitempty"`  // 0 = use wireguard.listen_port
-	ListenAddrs string `json:"listen_addrs,omitempty"`                  // comma-separated IPs, empty = all
-	URL         string `json:"url,omitempty"`                           // for base=url
+	Base        string `gorm:"not null" json:"base"`                   // udp|tcp|tls|dtls|http|https|quic|quic-ws|url
+	Listen      bool   `gorm:"default:false" json:"listen"`            // enable listener
+	ListenPort  int    `gorm:"default:0" json:"listen_port,omitempty"` // 0 = use wireguard.listen_port
+	ListenAddrs string `json:"listen_addrs,omitempty"`                 // comma-separated IPs, empty = all
+	URL         string `json:"url,omitempty"`                          // for base=url
 	WSPath      string `json:"ws_path,omitempty"`
 	ConnectHost string `json:"connect_host,omitempty"`
 	HostHeader  string `json:"host_header,omitempty"`
+	// TURN base transport settings
+	TurnServer             string `json:"turn_server,omitempty"`
+	TurnUsername           string `json:"turn_username,omitempty"`
+	TurnPassword           string `json:"turn_password,omitempty"`
+	TurnRealm              string `json:"turn_realm,omitempty"`
+	TurnProtocol           string `json:"turn_protocol,omitempty"`
+	TurnNoCreatePermission bool   `json:"turn_no_create_permission,omitempty"`
+	TurnIncludeWGPublicKey bool   `json:"turn_include_wg_public_key,omitempty"`
+	TurnPermissions        string `json:"turn_permissions,omitempty"` // comma-separated
 	// TLS settings
 	TLSCertFile   string `json:"tls_cert_file,omitempty"`
 	TLSKeyFile    string `json:"tls_key_file,omitempty"`
@@ -226,10 +240,17 @@ type TransportConfig struct {
 	TLSVerifyPeer bool   `json:"tls_verify_peer,omitempty"`
 	TLSServerSNI  string `json:"tls_server_sni,omitempty"`
 	// Proxy settings
-	ProxyType     string `json:"proxy_type,omitempty"` // none|turn|socks5|http
+	ProxyType     string `json:"proxy_type,omitempty"` // none|socks5|http
 	ProxyServer   string `json:"proxy_server,omitempty"`
 	ProxyUsername string `json:"proxy_username,omitempty"`
 	ProxyPassword string `json:"proxy_password,omitempty"`
+	// Runtime fields from /v1/status
+	Connected         bool   `gorm:"-" json:"connected,omitempty"`
+	CarrierProtocol   string `gorm:"-" json:"carrier_protocol,omitempty"`
+	CarrierLocalAddr  string `gorm:"-" json:"carrier_local_addr,omitempty"`
+	CarrierRemoteAddr string `gorm:"-" json:"carrier_remote_addr,omitempty"`
+	RelayAddr         string `gorm:"-" json:"relay_addr,omitempty"`
+	ActiveSessions    int    `gorm:"-" json:"active_sessions,omitempty"`
 }
 
 type PeerProtected = Peer
@@ -619,7 +640,8 @@ func initGlobalSettings() {
 	defaults := map[string]string{
 		"server_privkey":           secrets.ServerPrivateKey,
 		"server_pubkey":            secrets.ServerPublicKey,
-		"server_endpoint":          "127.0.0.1:51820",
+		"server_endpoint":          resolvedServerEndpoint(),
+		"default_transport":        "",
 		"client_dns":               "100.64.0.1",
 		"client_subnet_ipv4":       "100.64.0.0/24",
 		"client_subnet_ipv6":       "fd00:64::/64",
@@ -638,6 +660,9 @@ func initGlobalSettings() {
 		"yaml_socks5_udp":          "true",
 		"custom_yaml_enabled":      "false",
 		"custom_yaml":              "",
+		"acl_inbound_default":      "allow",
+		"acl_outbound_default":     "allow",
+		"acl_relay_default":        "deny",
 	}
 
 	if ep := os.Getenv("WG_PUBLIC_ENDPOINT"); ep != "" {
@@ -982,26 +1007,26 @@ func handleHMACNonce(w http.ResponseWriter, r *http.Request) {
 
 func fetchDaemonPeerStats() map[string]Peer {
 	statsMap := make(map[string]Peer)
-	resp, err := uwgRequest("GET", "/v1/status", nil)
-	if err != nil {
-		return statsMap
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return statsMap
-	}
-
-	var st struct {
-		Peers []Peer `json:"peers"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
-		return statsMap
-	}
-
-	trafficHistory.Record(st.Peers, time.Now())
+	st := fetchDaemonStatus()
+	trafficPeers := make([]Peer, 0, len(st.Peers))
 	for _, p := range st.Peers {
-		statsMap[p.PublicKey] = p
+		peer := Peer{
+			PublicKey:            p.PublicKey,
+			EndpointIP:           p.EndpointIP,
+			LastHandshakeTime:    p.LastHandshakeTime,
+			TransmitBytes:        p.TransmitBytes,
+			ReceiveBytes:         p.ReceiveBytes,
+			HasHandshake:         p.HasHandshake,
+			TransportName:        p.TransportName,
+			TransportState:       p.TransportState,
+			TransportEndpoint:    p.TransportEndpoint,
+			TransportSourceAddr:  p.TransportSourceAddr,
+			TransportCarrierAddr: p.TransportCarrierRemoteAddr,
+		}
+		trafficPeers = append(trafficPeers, peer)
+		statsMap[p.PublicKey] = peer
 	}
+	trafficHistory.Record(trafficPeers, time.Now())
 	return statsMap
 }
 
@@ -1031,6 +1056,11 @@ func handleGetPeers(w http.ResponseWriter, r *http.Request) {
 			if stat.EndpointIP != "" {
 				p.EndpointIP = stat.EndpointIP
 			}
+			p.TransportName = stat.TransportName
+			p.TransportState = stat.TransportState
+			p.TransportEndpoint = stat.TransportEndpoint
+			p.TransportSourceAddr = stat.TransportSourceAddr
+			p.TransportCarrierAddr = stat.TransportCarrierAddr
 		}
 
 		// Filter sensitive data
@@ -1295,6 +1325,21 @@ func handleDeleteACL(w http.ResponseWriter, r *http.Request) {
 func handleGetTransports(w http.ResponseWriter, r *http.Request) {
 	var ts []TransportConfig
 	gdb.Find(&ts)
+	runtime := fetchDaemonStatus()
+	runtimeByName := make(map[string]daemonTransportSnapshot, len(runtime.Transports))
+	for _, rt := range runtime.Transports {
+		runtimeByName[rt.Name] = rt
+	}
+	for i := range ts {
+		if rt, ok := runtimeByName[ts[i].Name]; ok {
+			ts[i].ActiveSessions = rt.ActiveSessions
+			ts[i].Connected = rt.Connected
+			ts[i].CarrierProtocol = rt.CarrierProtocol
+			ts[i].CarrierLocalAddr = rt.CarrierLocalAddr
+			ts[i].CarrierRemoteAddr = rt.CarrierRemoteAddr
+			ts[i].RelayAddr = rt.RelayAddr
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ts)
 }
@@ -1350,9 +1395,13 @@ func getTransportsConfig() []map[string]interface{} {
 	gdb.Find(&ts)
 	var out []map[string]interface{}
 	for _, t := range ts {
+		base := t.Base
+		if strings.EqualFold(base, "udp") && strings.EqualFold(t.ProxyType, "turn") {
+			base = "turn"
+		}
 		m := map[string]interface{}{
 			"name":   t.Name,
-			"base":   t.Base,
+			"base":   base,
 			"listen": t.Listen,
 		}
 		if t.ListenPort > 0 {
@@ -1404,7 +1453,52 @@ func getTransportsConfig() []map[string]interface{} {
 		if len(tls) > 0 {
 			m["tls"] = tls
 		}
-		if t.ProxyType != "" && t.ProxyType != "none" {
+		if strings.EqualFold(base, "turn") {
+			turnCfg := map[string]interface{}{
+				"server": t.TurnServer,
+			}
+			if strings.EqualFold(t.ProxyType, "turn") {
+				turnCfg["server"] = t.ProxyServer
+				if t.ProxyUsername != "" {
+					turnCfg["username"] = t.ProxyUsername
+					turnCfg["password"] = t.ProxyPassword
+				}
+			} else {
+				if t.TurnUsername != "" {
+					turnCfg["username"] = t.TurnUsername
+					turnCfg["password"] = t.TurnPassword
+				}
+			}
+			if t.TurnRealm != "" {
+				turnCfg["realm"] = t.TurnRealm
+			}
+			if t.TurnProtocol != "" {
+				turnCfg["protocol"] = t.TurnProtocol
+			}
+			if t.TurnNoCreatePermission {
+				turnCfg["no_create_permission"] = true
+			}
+			if t.TurnIncludeWGPublicKey {
+				turnCfg["include_wg_public_key"] = true
+			}
+			if strings.TrimSpace(t.TurnPermissions) != "" {
+				var permissions []string
+				for _, p := range strings.Split(t.TurnPermissions, ",") {
+					if p = strings.TrimSpace(p); p != "" {
+						permissions = append(permissions, p)
+					}
+				}
+				if len(permissions) > 0 {
+					turnCfg["permissions"] = permissions
+				}
+			}
+			if len(tls) > 0 {
+				turnCfg["tls"] = tls
+				delete(m, "tls")
+			}
+			m["turn"] = turnCfg
+		}
+		if t.ProxyType != "" && t.ProxyType != "none" && !strings.EqualFold(t.ProxyType, "turn") {
 			proxy := map[string]interface{}{"type": t.ProxyType}
 			switch t.ProxyType {
 			case "socks5":
@@ -1421,12 +1515,6 @@ func getTransportsConfig() []map[string]interface{} {
 					h["password"] = t.ProxyPassword
 				}
 				proxy["http"] = h
-			case "turn":
-				proxy["turn"] = map[string]interface{}{
-					"server":   t.ProxyServer,
-					"username": t.ProxyUsername,
-					"password": t.ProxyPassword,
-				}
 			}
 			m["proxy"] = proxy
 		}
@@ -1460,15 +1548,22 @@ func getACLConfig() map[string]interface{} {
 	}
 
 	acl := map[string]interface{}{
-		"inbound_default":  "allow",
-		"outbound_default": "allow",
-		"relay_default":    "deny",
+		"inbound_default":  strings.ToLower(strings.TrimSpace(getConfig("acl_inbound_default"))),
+		"outbound_default": strings.ToLower(strings.TrimSpace(getConfig("acl_outbound_default"))),
+		"relay_default":    strings.ToLower(strings.TrimSpace(getConfig("acl_relay_default"))),
 		"inbound":          getRules("inbound"),
 		"outbound":         getRules("outbound"),
 		"relay":            getRules("relay"),
 	}
-	if getConfig("p2p_routing_enabled") == "true" {
-		acl["relay_default"] = "allow"
+	for _, key := range []string{"inbound_default", "outbound_default", "relay_default"} {
+		if acl[key] != "allow" && acl[key] != "deny" {
+			switch key {
+			case "relay_default":
+				acl[key] = "deny"
+			default:
+				acl[key] = "allow"
+			}
+		}
 	}
 
 	if getConfig("yaml_block_rfc") == "true" {
@@ -1693,6 +1788,10 @@ func buildCanonicalYAMLBytes(applyCustom bool) []byte {
 	}
 
 	managed["acl"] = getACLConfig()
+	if def := strings.TrimSpace(getConfig("default_transport")); def != "" {
+		managedWG := managed["wireguard"].(map[string]interface{})
+		managedWG["default_transport"] = def
+	}
 
 	if ts := getTransportsConfig(); len(ts) > 0 {
 		managed["transports"] = ts

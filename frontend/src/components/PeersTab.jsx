@@ -38,6 +38,30 @@ function parseNumberField(value) {
   return Number.parseInt(text, 10) || 0;
 }
 
+function formatTransportState(value) {
+  switch (value) {
+    case 'NotConnOriented':
+      return 'NotConnOriented';
+    case 'DialEndpoint':
+      return 'DialEndpoint';
+    case 'ConnEstablished':
+      return 'ConnEstablished';
+    default:
+      return value || '';
+  }
+}
+
+function transportStateChipClass(value) {
+  switch (value) {
+    case 'ConnEstablished':
+      return 'status-chip';
+    case 'DialEndpoint':
+      return 'status-chip status-chip-muted';
+    default:
+      return 'status-chip status-chip-danger';
+  }
+}
+
 function ShareModal({ peer, onClose }) {
   const [oneUse, setOneUse] = useState(false);
   const [expiresAt, setExpiresAt] = useState('');
@@ -335,6 +359,7 @@ export default function PeersTab({ isAdmin, onSelectPeer }) {
               const canRevealConfig = peer.has_private_key_material && (!peer.is_e2e || hasNonce);
               const canShareConfig = canRevealConfig;
               const hasShaper = (peer.traffic_upload_bps || 0) > 0 || (peer.traffic_download_bps || 0) > 0 || (peer.traffic_latency_ms || 0) > 0;
+              const hasTransportDetails = !!(peer.transport_name || peer.transport_state || peer.transport_endpoint || peer.transport_source_addr || peer.transport_carrier_remote_addr);
 
               return (
                 <article key={peer.id} className={`peer-card ${peer.enabled ? '' : 'peer-card-disabled'}`}>
@@ -351,6 +376,12 @@ export default function PeersTab({ isAdmin, onSelectPeer }) {
                             {peer.is_manual_key && <span className="status-chip status-chip-muted"><Lock size={12} /> Manual key</span>}
                             {peer.keepalive > 0 && <span className="status-chip">Keepalive {peer.keepalive}s</span>}
                             {hasShaper && <span className="status-chip">Shaped</span>}
+                            {peer.transport_name && <span className="status-chip status-chip-muted">Transport {peer.transport_name}</span>}
+                            {peer.transport_state && (
+                              <span className={transportStateChipClass(peer.transport_state)}>
+                                {formatTransportState(peer.transport_state)}
+                              </span>
+                            )}
                           </div>
                           <div className="space-y-1">
                             <p className="font-mono text-sm text-[var(--accent)]">{peer.assigned_ips}</p>
@@ -441,6 +472,22 @@ export default function PeersTab({ isAdmin, onSelectPeer }) {
                             {(peer.traffic_latency_ms || 0) > 0 ? ` · +${peer.traffic_latency_ms} ms` : ''}
                           </strong>
                         </div>
+                        {hasTransportDetails && (
+                          <div className="stat-tile">
+                            <span className="stat-label">Live transport</span>
+                            <strong className="break-all font-mono text-sm">
+                              {peer.transport_name || 'unknown'}
+                              {peer.transport_state ? ` · ${formatTransportState(peer.transport_state)}` : ''}
+                            </strong>
+                            {(peer.transport_endpoint || peer.transport_source_addr || peer.transport_carrier_remote_addr) && (
+                              <div className="mt-2 space-y-1 text-xs text-[var(--muted)]">
+                                {peer.transport_endpoint && <div>endpoint {peer.transport_endpoint}</div>}
+                                {peer.transport_source_addr && <div>source {peer.transport_source_addr}</div>}
+                                {peer.transport_carrier_remote_addr && <div>carrier {peer.transport_carrier_remote_addr}</div>}
+                              </div>
+                            )}
+                          </div>
+                        )}
                         {(isAdmin || peer.public_key) && (
                           <div className="stat-tile">
                             <span className="stat-label">Public key</span>
@@ -449,7 +496,7 @@ export default function PeersTab({ isAdmin, onSelectPeer }) {
                         )}
                         {(peer.endpoint_ip || peer.static_endpoint) && (
                           <div className="stat-tile">
-                            <span className="stat-label">Endpoint visibility</span>
+                            <span className="stat-label">Bootstrap endpoint</span>
                             <strong className="break-all font-mono text-sm">
                               {peer.static_endpoint ? `Static ${peer.static_endpoint}` : peer.endpoint_ip}
                             </strong>
