@@ -22,7 +22,7 @@ export function buildWireGuardConfig({
     'AllowedIPs = 0.0.0.0/0, ::/0',
   ];
 
-  if (transport) {
+  if (transport && transport != 'udp') {
     lines.push(`Transport = ${transport}`);
   }
 
