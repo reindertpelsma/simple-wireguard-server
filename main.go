@@ -61,10 +61,11 @@ var (
 	tlsKey        = flag.String("tls-key", "", "Path to TLS key")
 
 	// TURN settings from CLI
-	turnServer = flag.String("turn-server", "", "TURN server (host:port)")
-	turnUser   = flag.String("turn-user", "", "TURN username")
-	turnPass   = flag.String("turn-pass", "", "TURN password")
-	turnRealm  = flag.String("turn-realm", "", "TURN realm")
+	turnServer             = flag.String("turn-server", "", "TURN server (host:port)")
+	turnUser               = flag.String("turn-user", "", "TURN username")
+	turnPass               = flag.String("turn-pass", "", "TURN password")
+	turnRealm              = flag.String("turn-realm", "", "TURN realm")
+	turnIncludeWGPublicKey = flag.Bool("turn-include-wg-public-key", false, "Append an encrypted WireGuard public key to the TURN username")
 
 	baselineConfig = flag.String("baseline-config", "", "Path to baseline YAML configuration to merge with UI settings")
 	generateConfig = flag.Bool("generate-config", false, "Generate and print a bootstrap WireGuard client config on startup")
@@ -203,6 +204,30 @@ type ACLRule struct {
 	Proto    string `json:"proto,omitempty"`
 	DPort    string `json:"dport,omitempty"`
 	Priority int    `gorm:"default:0" json:"priority"`
+}
+
+// TransportConfig stores a pluggable transport entry managed via the UI.
+// The JSON fields mirror transport.Config so the UI can read/write them.
+type TransportConfig struct {
+	ID          uint   `gorm:"primaryKey" json:"id"`
+	Name        string `gorm:"uniqueIndex;not null" json:"name"`
+	Base        string `gorm:"not null" json:"base"`       // udp|tcp|tls|dtls|http|https|quic|quic-ws|url
+	Listen      bool   `gorm:"default:false" json:"listen"` // enable listener
+	URL         string `json:"url,omitempty"`              // for base=url
+	WSPath      string `json:"ws_path,omitempty"`
+	ConnectHost string `json:"connect_host,omitempty"`
+	HostHeader  string `json:"host_header,omitempty"`
+	// TLS settings
+	TLSCertFile    string `json:"tls_cert_file,omitempty"`
+	TLSKeyFile     string `json:"tls_key_file,omitempty"`
+	TLSCAFile      string `json:"tls_ca_file,omitempty"`
+	TLSVerifyPeer  bool   `json:"tls_verify_peer,omitempty"`
+	TLSServerSNI   string `json:"tls_server_sni,omitempty"`
+	// Proxy settings
+	ProxyType     string `json:"proxy_type,omitempty"` // none|turn|socks5|http
+	ProxyServer   string `json:"proxy_server,omitempty"`
+	ProxyUsername string `json:"proxy_username,omitempty"`
+	ProxyPassword string `json:"proxy_password,omitempty"`
 }
 
 type PeerProtected = Peer
@@ -397,6 +422,13 @@ func main() {
 	if *turnRealm == "" {
 		*turnRealm = os.Getenv("TURN_REALM")
 	}
+	if !*turnIncludeWGPublicKey {
+		if v := os.Getenv("TURN_INCLUDE_WG_PUBLIC_KEY"); v != "" {
+			if parsed, err := strconv.ParseBool(v); err == nil {
+				*turnIncludeWGPublicKey = parsed
+			}
+		}
+	}
 	os.MkdirAll(*dataDir, 0755)
 	rand.Read(hmacSecret)
 	initDB()
@@ -472,6 +504,11 @@ func main() {
 	mux.HandleFunc("POST /api/admin/acls", authMiddleware(adminMiddleware(handleCreateACL)))
 	mux.HandleFunc("DELETE /api/admin/acls/{id}", authMiddleware(adminMiddleware(handleDeleteACL)))
 
+	mux.HandleFunc("GET /api/admin/transports", authMiddleware(adminMiddleware(handleGetTransports)))
+	mux.HandleFunc("POST /api/admin/transports", authMiddleware(adminMiddleware(handleCreateTransport)))
+	mux.HandleFunc("PATCH /api/admin/transports/{id}", authMiddleware(adminMiddleware(handleUpdateTransport)))
+	mux.HandleFunc("DELETE /api/admin/transports/{id}", authMiddleware(adminMiddleware(handleDeleteTransport)))
+
 	// Admin - Config
 	mux.HandleFunc("GET /api/admin/config", authMiddleware(adminMiddleware(handleGetAdminConfig)))
 	mux.HandleFunc("POST /api/admin/config", authMiddleware(adminMiddleware(handleUpdateGlobalConfig)))
@@ -517,7 +554,7 @@ func initDB() {
 	}
 
 	// Auto Migration
-	err = gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{})
+	err = gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{})
 	if err != nil {
 		log.Fatalf("Failed to migrate database: %v", err)
 	}
@@ -1236,6 +1273,135 @@ func handleDeleteACL(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func handleGetTransports(w http.ResponseWriter, r *http.Request) {
+	var ts []TransportConfig
+	gdb.Find(&ts)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ts)
+}
+
+func handleCreateTransport(w http.ResponseWriter, r *http.Request) {
+	var t TransportConfig
+	if err := json.NewDecoder(r.Body).Decode(&t); err != nil || t.Name == "" || t.Base == "" {
+		http.Error(w, "Invalid request: name and base are required", http.StatusBadRequest)
+		return
+	}
+	t.ID = 0
+	if err := gdb.Create(&t).Error; err != nil {
+		http.Error(w, "Transport name already exists", http.StatusConflict)
+		return
+	}
+	generateCanonicalYAML()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(t)
+}
+
+func handleUpdateTransport(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var t TransportConfig
+	if err := gdb.First(&t, id).Error; err != nil {
+		http.Error(w, "Transport not found", http.StatusNotFound)
+		return
+	}
+	var req TransportConfig
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	req.ID = t.ID
+	if err := gdb.Save(&req).Error; err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	generateCanonicalYAML()
+	w.WriteHeader(http.StatusOK)
+}
+
+func handleDeleteTransport(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	gdb.Delete(&TransportConfig{}, id)
+	generateCanonicalYAML()
+	w.WriteHeader(http.StatusOK)
+}
+
+// getTransportsConfig returns the transports section for the canonical YAML.
+func getTransportsConfig() []map[string]interface{} {
+	var ts []TransportConfig
+	gdb.Find(&ts)
+	var out []map[string]interface{}
+	for _, t := range ts {
+		m := map[string]interface{}{
+			"name":   t.Name,
+			"base":   t.Base,
+			"listen": t.Listen,
+		}
+		if t.URL != "" {
+			m["url"] = t.URL
+		}
+		if t.WSPath != "" || t.ConnectHost != "" || t.HostHeader != "" {
+			ws := map[string]interface{}{}
+			if t.WSPath != "" {
+				ws["path"] = t.WSPath
+			}
+			if t.ConnectHost != "" {
+				ws["connect_host"] = t.ConnectHost
+			}
+			if t.HostHeader != "" {
+				ws["host_header"] = t.HostHeader
+			}
+			m["websocket"] = ws
+		}
+		tls := map[string]interface{}{}
+		if t.TLSCertFile != "" {
+			tls["cert_file"] = t.TLSCertFile
+		}
+		if t.TLSKeyFile != "" {
+			tls["key_file"] = t.TLSKeyFile
+		}
+		if t.TLSCAFile != "" {
+			tls["ca_file"] = t.TLSCAFile
+		}
+		if t.TLSVerifyPeer {
+			tls["verify_peer"] = true
+		}
+		if t.TLSServerSNI != "" {
+			tls["server_sni"] = t.TLSServerSNI
+		}
+		if len(tls) > 0 {
+			m["tls"] = tls
+		}
+		if t.ProxyType != "" && t.ProxyType != "none" {
+			proxy := map[string]interface{}{"type": t.ProxyType}
+			switch t.ProxyType {
+			case "socks5":
+				s := map[string]interface{}{"server": t.ProxyServer}
+				if t.ProxyUsername != "" {
+					s["username"] = t.ProxyUsername
+					s["password"] = t.ProxyPassword
+				}
+				proxy["socks5"] = s
+			case "http":
+				h := map[string]interface{}{"server": t.ProxyServer}
+				if t.ProxyUsername != "" {
+					h["username"] = t.ProxyUsername
+					h["password"] = t.ProxyPassword
+				}
+				proxy["http"] = h
+			case "turn":
+				proxy["turn"] = map[string]interface{}{
+					"server":   t.ProxyServer,
+					"username": t.ProxyUsername,
+					"password": t.ProxyPassword,
+				}
+			}
+			m["proxy"] = proxy
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
 func getACLConfig() map[string]interface{} {
 	getRules := func(list string) []map[string]interface{} {
 		var rules []ACLRule
@@ -1485,14 +1651,19 @@ func buildCanonicalYAMLBytes(applyCustom bool) []byte {
 
 	if *turnServer != "" {
 		managed["turn"] = map[string]interface{}{
-			"server":   *turnServer,
-			"username": *turnUser,
-			"password": *turnPass,
-			"realm":    *turnRealm,
+			"server":                *turnServer,
+			"username":              *turnUser,
+			"password":              *turnPass,
+			"realm":                 *turnRealm,
+			"include_wg_public_key": *turnIncludeWGPublicKey,
 		}
 	}
 
 	managed["acl"] = getACLConfig()
+
+	if ts := getTransportsConfig(); len(ts) > 0 {
+		managed["transports"] = ts
+	}
 
 	// Merge managed onto baseline
 	deepMerge(config, managed)

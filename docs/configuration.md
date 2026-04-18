@@ -45,6 +45,28 @@ Relevant CLI flags:
 --peer 'public_key=...,allowed_ips=...,endpoint=...,persistent_keepalive=25'
 ```
 
+## TURN
+
+```yaml
+turn:
+  server: turn.example.com:3478
+  username: wg-client
+  password: shared-secret
+  realm: example
+  permissions:
+    - 203.0.113.10:51820
+  include_wg_public_key: false
+```
+
+When `turn.server` is set, WireGuard UDP packets are sent through a TURN
+allocation. `permissions` seeds TURN permissions and static peer endpoints are
+added automatically. `include_wg_public_key` appends an encrypted copy of the
+WireGuard public key to the TURN username as `username---ciphertext`; use this
+only with TURN relays that understand that metadata.
+
+The UI daemon can generate this block with `-turn-server`, `-turn-user`,
+`-turn-pass`, `-turn-realm`, and `-turn-include-wg-public-key`.
+
 ## Proxies
 
 ```yaml
@@ -66,11 +88,15 @@ proxy:
       subnets: [0.0.0.0/0, ::/0]
   udp_associate: true
   bind: false
+  lowbind: false
   ipv6: null
   prefer_ipv6_for_udp_over_socks: false
 ```
 
 `outbound_proxies` replaces the older single-purpose fallback fields. `fallback_socks5` and `inbound.host_dial_proxy_socks5` still work and are internally converted to outbound proxy rules for compatibility.
+`proxy.bind` enables SOCKS5 BIND and raw socket/fdproxy listener-style tunnel
+binds. `proxy.lowbind` controls whether fdproxy-managed binds below port 1024
+are allowed.
 
 Roles:
 
@@ -162,6 +188,29 @@ CLI:
 --host-dial-bind-address 192.0.2.10
 ```
 
+## Traffic Shaping
+
+```yaml
+traffic_shaper:
+  upload_bps: 0
+  download_bps: 0
+  latency_ms: 15
+
+wireguard:
+  peers:
+    - public_key: BASE64_PUBLIC_KEY
+      allowed_ips: [100.64.90.2/32]
+      traffic_shaper:
+        upload_bps: 1048576
+        download_bps: 2097152
+        latency_ms: 20
+```
+
+The top-level shaper is a global per-peer default. A peer shaper overrides it
+for that peer. `uwgsocks-ui` stores per-peer shapers in the database and pushes
+them through the live `/v1/peers` API, so admin changes do not require a daemon
+restart.
+
 ## Host Forwarding And Filters
 
 ```yaml
@@ -198,6 +247,9 @@ CLI:
 ```yaml
 relay:
   enabled: false
+  conntrack: true
+  conntrack_max_flows: 65536
+  conntrack_max_per_peer: 4096
 
 acl:
   inbound_default: allow
@@ -216,12 +268,18 @@ CLI:
 
 ```bash
 --relay=true
+--relay-conntrack=true
+--relay-conntrack-max-flows 65536
+--relay-conntrack-max-per-peer 4096
 --acl-inbound-default deny
 --acl-outbound 'allow dst=100.64.90.0/24 dport=80-443'
 --acl-relay 'allow src=100.64.90.2/32 dst=100.64.90.3/32 dport=443'
 ```
 
-Relay ACLs are directional. For a TCP relay flow, allow both the client-to-server rule and the server-to-client reply rule when the default is deny.
+Relay forwarding uses stateful connection tracking by default. New TCP SYNs,
+new UDP conversations, and ICMP echo requests are checked against relay ACLs;
+established replies and matching ICMP errors are then allowed from conntrack.
+Set `relay.conntrack: false` to return to purely directional ACLs.
 
 ## DNS And API
 
@@ -244,6 +302,8 @@ proxy:
   http: 127.0.0.1:8080
   http_listeners:
     - unix:/run/uwgsocks/http.sock
+  bind: false
+  lowbind: false
 ```
 
 CLI:
@@ -276,15 +336,15 @@ userspace netstack.
 
 `/v1/socket` is the HTTP-upgraded raw socket protocol documented in
 [`docs/socket-protocol.md`](socket-protocol.md). Connected TCP/UDP sockets do
-not need `socket_api.bind`. TCP listener sockets require `socket_api.bind:
-true`. UDP listener-style sockets are allowed even when `bind` is false, but
-they are established-only unless `socket_api.udp_inbound: true`: replies are
-delivered only from remote IP:port pairs the client has contacted recently.
-Binding to addresses outside this peer's assigned WireGuard IPs requires
-`socket_api.transparent_bind: true`. UDP listener-style sockets can be
-converted to connected UDP sockets, reconnected to another peer, or disconnected
-again by sending a `connect` frame with `listener_connection_id` set to the
-existing UDP socket ID.
+not need `socket_api.bind`; connected ICMP ping sockets are also supported and
+are checked against outbound ACL rules with protocol `icmp`. Connected TCP/UDP
+sockets follow the same `AllowedIPs`, outbound-proxy, and `fallback_direct`
+routing order as SOCKS5/HTTP. Raw socket API IPv6 connect attempts are rejected
+immediately when the runtime has no tunnel IPv6, so Happy Eyeballs can try
+IPv4. TCP listener sockets require `socket_api.bind: true` or `proxy.bind:
+true`. UDP listener-style sockets are allowed even when bind is false, but are
+established-only unless `socket_api.udp_inbound: true`. Binding below port 1024
+additionally requires `proxy.lowbind: true`.
 
 `proxy.http_listeners` adds extra HTTP proxy listeners in addition to
 `proxy.http`. This lets the same HTTP proxy, including `/uwg/socket`, be

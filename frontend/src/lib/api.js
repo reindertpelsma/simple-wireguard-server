@@ -106,13 +106,30 @@ export const api = {
 
   // Admin - ACLs
   getACLs: () => request('/api/admin/acls'),
-  createACL: (data) => 
+  createACL: (data) =>
     request('/api/admin/acls', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
-  deleteACL: (id) => 
+  deleteACL: (id) =>
     request(`/api/admin/acls/${id}`, {
+      method: 'DELETE',
+    }),
+
+  // Admin - Transports
+  getTransports: () => request('/api/admin/transports'),
+  createTransport: (data) =>
+    request('/api/admin/transports', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateTransport: (id, data) =>
+    request(`/api/admin/transports/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  deleteTransport: (id) =>
+    request(`/api/admin/transports/${id}`, {
       method: 'DELETE',
     }),
 

@@ -4,8 +4,8 @@
 # Raw Socket API
 
 The raw socket API is for clients that need more than SOCKS5 or HTTP CONNECT:
-connected TCP, connected UDP, tunnel-side bind/listen, DNS transactions, and a
-future `socksify`/`LD_PRELOAD` wrapper.
+connected TCP, connected UDP, connected ICMP ping sockets, tunnel-side
+bind/listen, DNS transactions, and the Linux wrapper/fdproxy path.
 
 The implemented endpoints are:
 
@@ -30,6 +30,7 @@ Implemented and tested:
 
 - TCP connect over the socket protocol
 - UDP connect over the socket protocol
+- connected ICMP/ICMPv6 ping sockets over the socket protocol
 - TCP bind/listen inside the userspace WireGuard netstack
 - UDP listener reconnect and disconnect, including Linux-style UDP peer replace
 - inbound TCP accept notification from server to client
@@ -41,10 +42,13 @@ Implemented and tested:
 
 Still intentionally limited:
 
-- ICMP sockets over this protocol are not implemented yet
-- the preload wrapper is still a proof layer, not a production libc shim:
-  `sendmsg`/`recvmsg`, libc resolver interposition, full `select`/`epoll`
-  shimming, and full loopback-plus-tunnel dual binding are not implemented
+- ICMP support is for outbound unprivileged ping-style datagram sockets:
+  `socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP)` and the IPv6 equivalent. Raw
+  ICMP sockets and listener-style ICMP sockets are not exposed.
+- the preload/ptrace wrapper is still a proof layer, not a production libc
+  shim: `sendmsg`/`recvmsg`/`sendmmsg`/`recvmmsg` are covered for TCP and UDP,
+  but full `select`/`epoll` shimming and some uncommon socket options are not
+  implemented
 - the managed-fd optimization is local-only; remote HTTP `/uwg/socket` users
   need a local fd bridge daemon such as `uwgfdproxy`
 
@@ -91,7 +95,7 @@ Protocols:
 
 - `1 TCP`
 - `2 UDP`
-- `3 ICMP`, reserved
+- `3 ICMP`
 
 ## Connect
 
@@ -119,6 +123,7 @@ Client to server:
 - TCP without a destination becomes a listener and cannot send data directly.
 - UDP without a destination is a listener-style UDP socket.
 - UDP with a destination is an outbound connected UDP socket.
+- ICMP requires a destination IP and uses destination/bind port zero.
 
 For UDP only, a client can also set `listener_connection_id` to an existing UDP
 listener-style connection ID and send the frame on that same ID. That converts
@@ -243,10 +248,11 @@ The `uwgfdproxy` helper implements the local bridge. The manager accepts small
 bootstrap lines:
 
 ```text
-CONNECT tcp 100.64.90.1 443
-CONNECT udp 100.64.90.1 53
-LISTEN tcp 100.64.90.2 8080
-LISTEN udp 100.64.90.2 5353
+CONNECT tcp 100.64.90.1 443 100.64.90.2 40000 0 0
+CONNECT udp 100.64.90.1 53 100.64.90.2 40001 0 0
+CONNECT icmp 100.64.90.1 0 0.0.0 0
+LISTEN tcp 0.0.0.0 8080 1 1
+LISTEN udp 0.0.0.0 5353 1 1
 ATTACH <listener-token> <accepted-connection-id>
 ```
 
@@ -308,8 +314,8 @@ Recommended support order:
    UDP listener mode
 4. TCP listener `accept` with manager `ATTACH`
 5. libc DNS interposition through the `dns` action
-6. `sendmsg`/`recvmsg`, full resolver interposition, and broader fd API
-   coverage for production socksify-style use
+6. full resolver interposition, broader fd API coverage, and wider event-loop
+   shimming for production socksify-style use
 
 Avoid ptrace as the default transport. It is useful for diagnostics, but it is
 slower, architecture-sensitive, awkward with threads and signals, and often
