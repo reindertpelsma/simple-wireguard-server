@@ -45,6 +45,7 @@ export default function SharedConfigPage({ token, theme, onToggleTheme }) {
           mtu: shared.mtu,
           serverPublicKey: shared.server_public_key,
           endpoint: shared.server_endpoint,
+          transport: shared.default_transport,
           presharedKey: shared.preshared_key,
           keepalive: shared.keepalive,
         });

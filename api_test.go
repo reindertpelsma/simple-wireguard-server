@@ -27,7 +27,7 @@ func setupTestDB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{})
+	gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{})
 	initGlobalSettings()
 }
 
@@ -263,6 +263,188 @@ func TestACLManagement(t *testing.T) {
 
 	if w.Code != http.StatusCreated {
 		t.Errorf("expected 201, got %d", w.Code)
+	}
+}
+
+func TestHandleGetPeersIncludesTransportStatus(t *testing.T) {
+	setupTestDB(t)
+	user, token := createTestUser(t, "user1", false)
+	peer := Peer{
+		UserID:      user.ID,
+		Name:        "Phone",
+		PublicKey:   "peer-pub",
+		AssignedIPs: "100.64.0.2/32",
+		Enabled:     true,
+	}
+	if err := gdb.Create(&peer).Error; err != nil {
+		t.Fatalf("create peer: %v", err)
+	}
+
+	oldURL, oldToken := *uwgsocksURL, *uwgsocksToken
+	defer func() {
+		*uwgsocksURL = oldURL
+		*uwgsocksToken = oldToken
+	}()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/status" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"peers": [{
+				"public_key": "peer-pub",
+				"endpoint_ip": "198.51.100.10",
+				"has_handshake": true,
+				"transport_name": "turn-edge",
+				"transport_state": "ConnEstablished",
+				"transport_endpoint": "turn-edge@198.51.100.10:51820",
+				"transport_source_addr": "10.0.0.2:49152",
+				"transport_carrier_remote_addr": "161.35.159.61:3478"
+			}]
+		}`)
+	}))
+	defer server.Close()
+	*uwgsocksURL = server.URL
+
+	req := httptest.NewRequest("GET", "/api/peers", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-User-Id", fmt.Sprint(user.ID))
+	req.Header.Set("X-Is-Admin", "false")
+	w := httptest.NewRecorder()
+	handleGetPeers(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var peers []Peer
+	if err := json.Unmarshal(w.Body.Bytes(), &peers); err != nil {
+		t.Fatalf("decode peers: %v", err)
+	}
+	if len(peers) != 1 {
+		t.Fatalf("expected 1 peer, got %d", len(peers))
+	}
+	if peers[0].TransportName != "turn-edge" {
+		t.Fatalf("expected transport name turn-edge, got %q", peers[0].TransportName)
+	}
+	if peers[0].TransportState != "ConnEstablished" {
+		t.Fatalf("expected transport state ConnEstablished, got %q", peers[0].TransportState)
+	}
+	if peers[0].TransportEndpoint != "turn-edge@198.51.100.10:51820" {
+		t.Fatalf("unexpected transport endpoint: %q", peers[0].TransportEndpoint)
+	}
+	if peers[0].TransportSourceAddr != "10.0.0.2:49152" {
+		t.Fatalf("unexpected transport source addr: %q", peers[0].TransportSourceAddr)
+	}
+	if peers[0].TransportCarrierAddr != "161.35.159.61:3478" {
+		t.Fatalf("unexpected transport carrier addr: %q", peers[0].TransportCarrierAddr)
+	}
+}
+
+func TestHandleGetTransportsIncludesRuntimeStatus(t *testing.T) {
+	setupTestDB(t)
+	if err := gdb.Create(&TransportConfig{
+		Name:       "turn-edge",
+		Base:       "turn",
+		TurnServer: "turn.example.com:3478",
+	}).Error; err != nil {
+		t.Fatalf("create transport: %v", err)
+	}
+
+	oldURL, oldToken := *uwgsocksURL, *uwgsocksToken
+	defer func() {
+		*uwgsocksURL = oldURL
+		*uwgsocksToken = oldToken
+	}()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/status" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"transports": [{
+				"name": "turn-edge",
+				"connected": true,
+				"carrier_protocol": "tls",
+				"carrier_local_addr": "10.0.0.2:50000",
+				"carrier_remote_addr": "161.35.159.61:443",
+				"relay_addr": "161.35.159.61:55000",
+				"active_sessions": 3
+			}]
+		}`)
+	}))
+	defer server.Close()
+	*uwgsocksURL = server.URL
+
+	req := httptest.NewRequest("GET", "/api/admin/transports", nil)
+	w := httptest.NewRecorder()
+	handleGetTransports(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var transports []TransportConfig
+	if err := json.Unmarshal(w.Body.Bytes(), &transports); err != nil {
+		t.Fatalf("decode transports: %v", err)
+	}
+	if len(transports) != 1 {
+		t.Fatalf("expected 1 transport, got %d", len(transports))
+	}
+	if !transports[0].Connected {
+		t.Fatalf("expected transport to be marked connected")
+	}
+	if transports[0].CarrierProtocol != "tls" {
+		t.Fatalf("unexpected carrier protocol: %q", transports[0].CarrierProtocol)
+	}
+	if transports[0].RelayAddr != "161.35.159.61:55000" {
+		t.Fatalf("unexpected relay addr: %q", transports[0].RelayAddr)
+	}
+	if transports[0].ActiveSessions != 3 {
+		t.Fatalf("unexpected active sessions: %d", transports[0].ActiveSessions)
+	}
+}
+
+func TestResolvedServerEndpointUsesTurnRelayAddr(t *testing.T) {
+	setupTestDB(t)
+	if err := gdb.Create(&TransportConfig{
+		Name:       "turn-edge",
+		Base:       "turn",
+		TurnServer: "turn.example.com:3478",
+	}).Error; err != nil {
+		t.Fatalf("create transport: %v", err)
+	}
+	gdb.Model(&GlobalConfig{}).Where("key = ?", "server_endpoint").Update("value", "")
+	gdb.Model(&GlobalConfig{}).Where("key = ?", "default_transport").Update("value", "turn-edge")
+
+	oldURL, oldToken := *uwgsocksURL, *uwgsocksToken
+	defer func() {
+		*uwgsocksURL = oldURL
+		*uwgsocksToken = oldToken
+	}()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/status" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"transports": [{
+				"name": "turn-edge",
+				"relay_addr": "161.35.159.61:55000"
+			}]
+		}`)
+	}))
+	defer server.Close()
+	*uwgsocksURL = server.URL
+
+	if got := resolvedServerEndpoint(); got != "161.35.159.61:55000" {
+		t.Fatalf("expected relay addr, got %q", got)
 	}
 }
 

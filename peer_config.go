@@ -9,6 +9,7 @@ import (
 var publicConfigKeys = []string{
 	"allow_custom_private_key",
 	"client_dns",
+	"default_transport",
 	"e2e_encryption_enabled",
 	"endpoints_visible",
 	"global_mtu",
@@ -20,7 +21,10 @@ var publicConfigKeys = []string{
 var configFileNameSanitizer = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 
 func publicConfigMap() map[string]string {
-	return configMapForKeys(publicConfigKeys)
+	configs := configMapForKeys(publicConfigKeys)
+	configs["server_endpoint"] = resolvedServerEndpoint()
+	configs["default_transport"] = resolveDefaultTransportNameUI()
+	return configs
 }
 
 func adminConfigMap() map[string]string {
@@ -55,10 +59,12 @@ func configDownloadName(name string) string {
 }
 
 func buildClientConfigText(peer Peer, privateKey, presharedKey string, revealEndpoint bool) string {
-	endpoint := getConfig("server_endpoint")
+	endpoint := resolvedServerEndpoint()
 	if !revealEndpoint {
 		endpoint = "HIDDEN"
 	}
+	defaultTransport := resolveDefaultTransportNameUI()
+	defaultTransportConfig := resolveDefaultTransportConfigUI()
 
 	lines := []string{
 		"[Interface]",
@@ -71,6 +77,9 @@ func buildClientConfigText(peer Peer, privateKey, presharedKey string, revealEnd
 		fmt.Sprintf("PublicKey = %s", getConfig("server_pubkey")),
 		fmt.Sprintf("Endpoint = %s", endpoint),
 		"AllowedIPs = 0.0.0.0/0, ::/0",
+	}
+	if defaultTransport != "" && transportNeedsExplicitClientLine(defaultTransportConfig) {
+		lines = append(lines, fmt.Sprintf("Transport = %s", defaultTransport))
 	}
 
 	if presharedKey != "" {
