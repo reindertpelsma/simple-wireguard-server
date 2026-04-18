@@ -213,16 +213,18 @@ type TransportConfig struct {
 	Name        string `gorm:"uniqueIndex;not null" json:"name"`
 	Base        string `gorm:"not null" json:"base"`       // udp|tcp|tls|dtls|http|https|quic|quic-ws|url
 	Listen      bool   `gorm:"default:false" json:"listen"` // enable listener
-	URL         string `json:"url,omitempty"`              // for base=url
+	ListenPort  int    `gorm:"default:0" json:"listen_port,omitempty"`  // 0 = use wireguard.listen_port
+	ListenAddrs string `json:"listen_addrs,omitempty"`                  // comma-separated IPs, empty = all
+	URL         string `json:"url,omitempty"`                           // for base=url
 	WSPath      string `json:"ws_path,omitempty"`
 	ConnectHost string `json:"connect_host,omitempty"`
 	HostHeader  string `json:"host_header,omitempty"`
 	// TLS settings
-	TLSCertFile    string `json:"tls_cert_file,omitempty"`
-	TLSKeyFile     string `json:"tls_key_file,omitempty"`
-	TLSCAFile      string `json:"tls_ca_file,omitempty"`
-	TLSVerifyPeer  bool   `json:"tls_verify_peer,omitempty"`
-	TLSServerSNI   string `json:"tls_server_sni,omitempty"`
+	TLSCertFile   string `json:"tls_cert_file,omitempty"`
+	TLSKeyFile    string `json:"tls_key_file,omitempty"`
+	TLSCAFile     string `json:"tls_ca_file,omitempty"`
+	TLSVerifyPeer bool   `json:"tls_verify_peer,omitempty"`
+	TLSServerSNI  string `json:"tls_server_sni,omitempty"`
 	// Proxy settings
 	ProxyType     string `json:"proxy_type,omitempty"` // none|turn|socks5|http
 	ProxyServer   string `json:"proxy_server,omitempty"`
@@ -560,6 +562,23 @@ func initDB() {
 	}
 
 	ensureInitialAdminUser()
+	ensureDefaultTransport()
+}
+
+// ensureDefaultTransport seeds the default UDP transport on first boot so the
+// UI always shows at least one entry representing the standard WireGuard path.
+func ensureDefaultTransport() {
+	var count int64
+	gdb.Model(&TransportConfig{}).Count(&count)
+	if count > 0 {
+		return
+	}
+	gdb.Create(&TransportConfig{
+		Name:       "udp",
+		Base:       "udp",
+		Listen:     true,
+		ListenPort: 51820,
+	})
 }
 
 type SecretsConfig struct {
@@ -1335,6 +1354,20 @@ func getTransportsConfig() []map[string]interface{} {
 			"name":   t.Name,
 			"base":   t.Base,
 			"listen": t.Listen,
+		}
+		if t.ListenPort > 0 {
+			m["listen_port"] = t.ListenPort
+		}
+		if t.ListenAddrs != "" {
+			var addrs []string
+			for _, a := range strings.Split(t.ListenAddrs, ",") {
+				if a = strings.TrimSpace(a); a != "" {
+					addrs = append(addrs, a)
+				}
+			}
+			if len(addrs) > 0 {
+				m["listen_addresses"] = addrs
+			}
 		}
 		if t.URL != "" {
 			m["url"] = t.URL
