@@ -53,6 +53,22 @@ fi
 
 # 2. Build Frontend
 echo "Building frontend..."
+
+if ! command -v npm >/dev/null 2>&1; then
+  for candidate in \
+    "${HOME}/.nvm/versions/node/$(ls "${HOME}/.nvm/versions/node/" 2>/dev/null | sort -V | tail -1)/bin" \
+    "${HOME}/.fnm/node-versions/$(ls "${HOME}/.fnm/node-versions/" 2>/dev/null | sort -V | tail -1)/installation/bin" \
+    "${HOME}/.volta/bin" \
+    "/opt/homebrew/bin" \
+    "/usr/local/bin" \
+    "/usr/local/opt/node/bin"; do
+    if [ -x "${candidate}/npm" ]; then
+      export PATH="${candidate}:${PATH}"
+      break
+    fi
+  done
+fi
+
 if [ -d "frontend" ]; then
     rm -rf frontend/dist 2> /dev/null || /bin/true
     cd frontend && npm install && npm run build
@@ -64,10 +80,15 @@ else
     echo "Source frontend dir not found. Skipping frontend build (hope dist exists)."
 fi
 
-# 3. Build Binaries
-echo "Building uwgkm (Kernel Manager)..."
-echo "Note if this fails, then you can comment out this binary in compile.sh when you do not need kernel-based Wireguard that requires root"
-cd syswg && go build -ldflags="-s -w" -o ../uwgkm main.go && cd ..
+build_syswg() {
+    # 3. Build Binaries
+    echo "Building uwgkm (Kernel Manager)..."
+    (cd syswg && go build -ldflags="-s -w" -o ../uwgkm main.go || echo "Building syswg failed, will continue without syswg" )
+}
+
+if [ "$OS" == "linux" ]; then
+    build_syswg
+fi
 
 echo "Building uwgsocks-ui binary..."
 CGO_ENABLED=1 go build -ldflags="-s -w" -o uwgsocks-ui
