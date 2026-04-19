@@ -8,20 +8,20 @@ ARCH=$(uname -m)
 if [ "$ARCH" == "x86_64" ]; then ARCH="amd64"; fi
 
 if [ ! -f "./uwgsocks" ]; then
-    if [ -d "./userspace-wireguard-socks"]; then
-        if [ ! -f "./userspace-wireguard-socks/uwgsocks"]; then
+    if [ -d "./userspace-wireguard-socks" ]; then
+        if [ ! -f "./userspace-wireguard-socks/uwgsocks" ]; then
             (cd userspace-wireguard-socks && go build -o uwgsocks ./cmd/uwgsocks)
         fi
         cp ./userspace-wireguard-socks/uwgsocks .
     else
-        if [ -d "../userspace-wireguard-socks"]; then
+        if [ -d "../userspace-wireguard-socks" ]; then
             if [ ! -f ../userspace-wireguard-socks/uwgsocks ]; then
                 (cd ../userspace-wireguard-socks && go build -o uwgsocks ./cmd/uwgsocks)
             fi
             cp ../userspace-wireguard-socks/uwgsocks .
         else
             if [ ! -f "../uwgsocks" ]; then
-                if [ -f "../uwgsocks.go"]; then
+                if [ -f "../uwgsocks.go" ]; then
                     cd .. && go build -o uwgsocks ./cmd/uwgsocks && cd uwgsocks-ui
                 else
                     echo "uwgsocks not found, either clone as sub repo in this folder, put it on the parent folder, or make this a sub folder of the uwgsocks"
