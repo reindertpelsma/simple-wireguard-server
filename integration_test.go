@@ -1,5 +1,3 @@
-//go:build integration
-
 package main
 
 import (
@@ -145,9 +143,16 @@ func setupIntegrationGlobals(t *testing.T, dir, daemon, apiURL, token string) {
 
 func buildIntegrationUwgsocks(t *testing.T) string {
 	t.Helper()
-	repo := filepath.Join(os.Getenv("HOME"), "userspace-wireguard-socks")
-	if st, err := os.Stat(filepath.Join(repo, "go.mod")); err != nil || st.IsDir() {
-		t.Skipf("sibling userspace-wireguard-socks repo not found at %s", repo)
+
+	repo := "./userspace-wireguard-socks"
+	if st, err := os.Stat(filepath.Join(repo, "uwgsocks.go")); err != nil || st.IsDir() {
+		repo = "../userspace-wireguard-socks"
+		if st, err := os.Stat(filepath.Join(repo, "uwgsocks.go")); err != nil || st.IsDir() {
+			repo = "../"
+			if st, err := os.Stat(filepath.Join(repo, "uwgsocks.go")); err != nil || st.IsDir() {
+				t.Skipf("sibling userspace-wireguard-socks repo not found at %s", repo)
+			}
+		}
 	}
 	bin := filepath.Join(t.TempDir(), "uwgsocks")
 	goBin := "go"
