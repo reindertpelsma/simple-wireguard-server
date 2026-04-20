@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/Docker/userspace-wireguard-socks/**)",
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "Bash(go test *)",
+      "Bash(where gcc *)",
+      "Bash(where x86_64-w64-mingw32-gcc)",
+      "Bash(where cc *)",
+      "Read(//usr/**)",
+      "Read(//c/msys64/mingw64/**)",
+      "Read(//c/tools/msys64/mingw64/**)",
+      "Bash(winget --version)",
+      "Bash(choco --version)",
+      "Bash(go get *)",
+      "Bash(go build *)",
+      "Bash(netstat -ano)",
+      "Bash(tasklist /FI \"PID eq 5632\")",
+      "Bash(powershell *)"
+    ]
+  }
+}

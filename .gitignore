@@ -1,6 +1,7 @@
 *.log
 uwgkm
 uwgsocks
+uwgsocks.exe
 uwgsocks-ui
 dist/
 frontend/dist

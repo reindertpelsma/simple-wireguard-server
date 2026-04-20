@@ -155,7 +155,22 @@ func buildIntegrationUwgsocks(t *testing.T) string {
 			}
 		}
 	}
-	bin := filepath.Join(t.TempDir(), "uwgsocks")
+	binDir, err := os.MkdirTemp("", "uwgsocks-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// On Windows the OS holds an .exe lock briefly after the process exits.
+	// t.TempDir cleanup is immediate and fails; retry with backoff instead.
+	t.Cleanup(func() {
+		for i := 0; i < 15; i++ {
+			if err := os.RemoveAll(binDir); err == nil {
+				return
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		_ = os.RemoveAll(binDir)
+	})
+	bin := filepath.Join(binDir, "uwgsocks")
 	if runtime.GOOS == "windows" {
 		bin += ".exe"
 	}
