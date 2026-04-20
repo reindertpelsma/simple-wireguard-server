@@ -252,8 +252,8 @@ func startIntegrationClientDaemon(t *testing.T, daemonBin, dir string, key wgtyp
 		t.Fatal(err)
 	}
 	cmd := exec.Command(daemonBin, "--config", path)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = pipeWriter{os.Stdout}
+	cmd.Stderr = pipeWriter{os.Stderr}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start client daemon: %v", err)
 	}
