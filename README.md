@@ -7,15 +7,8 @@ Build a secure, rootless SD-WAN or VPN exit node in seconds.
 ## Quick Start (20 Seconds)
 
 1. **Build or download:**
-   Download:
-   ```bash
-   wget https://github.com/reindertpelsma/simple-wireguard-server/releases/download/0.1/uwgsocks-ui
-   wget https://github.com/reindertpelsma/userspace-wireguard-socks/releases/download/0.2/uwgsocks
-   wget https://github.com/reindertpelsma/simple-wireguard-server/releases/download/0.1/uwgkm #If you want to use Kernel Wireguard, requires root
-   chmod +x uwgsocks-ui uwgsocks uwgkm
-   ```
-
-   Or compile from source. Ensure you clone [https://github.com/reindertpelsma/userspace-wireguard-socks](https://github.com/reindertpelsma/userspace-wireguard-socks)
+   Ensure you clone [https://github.com/reindertpelsma/userspace-wireguard-socks](https://github.com/reindertpelsma/userspace-wireguard-socks)
+   
    ```bash
    ./compile.sh
    ```
