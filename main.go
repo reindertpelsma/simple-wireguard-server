@@ -15,6 +15,7 @@ import (
 	"crypto/x509/pkix"
 	"embed"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -151,29 +152,38 @@ func discoverMTU() int {
 
 // --- GORM Models ---
 type User struct {
-	ID           uint      `gorm:"primaryKey" json:"id"`
-	Username     string    `gorm:"uniqueIndex;not null" json:"username"`
-	PasswordHash string    `json:"-"`
-	Token        string    `gorm:"uniqueIndex" json:"token,omitempty"`
-	IsAdmin      bool      `gorm:"default:false" json:"is_admin"`
-	MaxConfigs   int       `gorm:"default:10" json:"max_configs"`
-	TOTPSecret   string    `json:"-"`
-	TOTPEnabled  bool      `gorm:"default:false" json:"totp_enabled"`
-	OIDCProvider string    `json:"oidc_provider,omitempty"`
-	OIDCSubject  *string   `gorm:"uniqueIndex" json:"oidc_subject,omitempty"`
-	Tags         string    `json:"tags,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	Peers        []Peer    `gorm:"foreignKey:UserID" json:"peers,omitempty"`
+	ID           uint    `gorm:"primaryKey" json:"id"`
+	Username     string  `gorm:"uniqueIndex;not null" json:"username"`
+	PasswordHash string  `json:"-"`
+	Token        string  `gorm:"uniqueIndex" json:"token,omitempty"`
+	IsAdmin      bool    `gorm:"default:false" json:"is_admin"`
+	MaxConfigs   int     `gorm:"default:10" json:"max_configs"`
+	TOTPSecret   string  `json:"-"`
+	TOTPEnabled  bool    `gorm:"default:false" json:"totp_enabled"`
+	OIDCProvider string  `json:"oidc_provider,omitempty"`
+	OIDCSubject  *string `gorm:"uniqueIndex" json:"oidc_subject,omitempty"`
+	// PrimaryGroup is the required group that determines this user's
+	// IP subnet. All peer configs created for this user inherit it.
+	PrimaryGroup string `json:"primary_group,omitempty"`
+	// Tags stores additional (non-primary) group memberships as CSV.
+	// Renamed to "groups" in the UI but kept as "tags" in the DB column.
+	Tags      string    `json:"groups,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Peers     []Peer    `gorm:"foreignKey:UserID" json:"peers,omitempty"`
 }
 
 type Peer struct {
-	ID                  uint       `gorm:"primaryKey" json:"id"`
-	UserID              uint       `gorm:"not null" json:"user_id"`
-	User                User       `gorm:"foreignKey:UserID" json:"-"`
-	Username            string     `gorm:"-" json:"username,omitempty"`
-	Name                string     `gorm:"not null" json:"name"`
-	Tags                string     `json:"tags,omitempty"`
+	ID       uint   `gorm:"primaryKey" json:"id"`
+	UserID   uint   `gorm:"not null" json:"user_id"`
+	User     User   `gorm:"foreignKey:UserID" json:"-"`
+	Username string `gorm:"-" json:"username,omitempty"`
+	Name     string `gorm:"not null" json:"name"`
+	// PrimaryGroup is fixed at creation (inherits from the user's primary group)
+	// and determines the IPv4/IPv6 subnet the config was allocated from.
+	PrimaryGroup string `json:"primary_group,omitempty"`
+	// Tags stores additional (non-primary) group memberships as CSV.
+	Tags                string     `json:"groups,omitempty"`
 	AssignedIPs         string     `gorm:"not null" json:"assigned_ips"`
 	Keepalive           int        `gorm:"default:0" json:"keepalive"`
 	EndpointIP          string     `json:"endpoint_ip,omitempty"`
@@ -666,14 +676,56 @@ func initDB() {
 	}
 
 	// Auto Migration
-	err = gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{}, &AccessProxyCredential{}, &ExposedService{}, &PolicyTag{}, &TunnelForward{})
+	err = gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{}, &AccessProxyCredential{}, &ExposedService{}, &Group{}, &TunnelForward{})
 
 	if err != nil {
 		log.Fatalf("Failed to migrate database: %v", err)
 	}
 
+	migrateLegacyPolicyTags()
 	ensureInitialAdminUser()
 	ensureDefaultTransport()
+}
+
+func migrateLegacyPolicyTags() {
+	if !gdb.Migrator().HasTable("policy_tags") {
+		return
+	}
+	var legacy []legacyPolicyTag
+	if err := gdb.Find(&legacy).Error; err != nil {
+		log.Printf("Failed to read legacy policy_tags table: %v", err)
+		return
+	}
+	for _, old := range legacy {
+		name := normalizeGroupName(old.Name)
+		if name == "" {
+			continue
+		}
+		var existing Group
+		if err := gdb.First(&existing, "name = ?", name).Error; err == nil {
+			changed := false
+			if existing.ExtraCIDRs == "" && old.ExtraCIDRs != "" {
+				existing.ExtraCIDRs = joinCSVList(splitCSVList(old.ExtraCIDRs))
+				changed = true
+			}
+			if existing.ParentGroups == "" && old.ParentTags != "" {
+				existing.ParentGroups = normalizeGroupList(splitCSVList(old.ParentTags))
+				changed = true
+			}
+			if changed {
+				gdb.Save(&existing)
+			}
+			continue
+		}
+		group := Group{
+			Name:         name,
+			ExtraCIDRs:   joinCSVList(splitCSVList(old.ExtraCIDRs)),
+			ParentGroups: normalizeGroupList(splitCSVList(old.ParentTags)),
+		}
+		if err := gdb.Create(&group).Error; err != nil {
+			log.Printf("Failed to migrate legacy policy tag %q: %v", name, err)
+		}
+	}
 }
 
 // ensureDefaultTransport seeds the default UDP transport on first boot so the
@@ -741,13 +793,22 @@ func initGlobalSettings() {
 	}
 
 	defaults := map[string]string{
-		"server_privkey":           secrets.ServerPrivateKey,
-		"server_pubkey":            secrets.ServerPublicKey,
-		"server_endpoint":          resolvedServerEndpoint(),
-		"default_transport":        "",
-		"client_dns":               "100.64.0.1",
-		"client_subnet_ipv4":       "100.64.0.0/24",
-		"client_subnet_ipv6":       "fd00:64::/64",
+		"server_privkey":    secrets.ServerPrivateKey,
+		"server_pubkey":     secrets.ServerPublicKey,
+		"server_endpoint":   resolvedServerEndpoint(),
+		"default_transport": "",
+		"client_dns":        "100.64.0.1",
+		// group_base_subnet is the pool from which group subnets are auto-assigned.
+		"group_base_subnet": "100.100.0.0/16",
+		// group_subnet_bits is the prefix length for auto-assigned group subnets.
+		"group_subnet_bits": "22",
+		// group_base_subnet_ipv6 is the IPv6 pool for auto-assigned group subnets.
+		"group_base_subnet_ipv6": "fd00::/48",
+		// group_subnet_ipv6_bits is the IPv6 prefix length per group.
+		"group_subnet_ipv6_bits": "64",
+		// Legacy flat subnet settings kept as fallback for peers without a group.
+		"client_subnet_ipv4":       "100.100.0.0/22",
+		"client_subnet_ipv6":       "fd00::0:0/64",
 		"enable_client_ipv6":       ipv6Default,
 		"public_keys_visible":      "false",
 		"endpoints_visible":        "false",
@@ -756,20 +817,20 @@ func initGlobalSettings() {
 		"e2e_encryption_enabled":   "true",
 		"global_mtu":               "1420",
 		// Canonical YAML Toggles
-		"yaml_l3_forwarding":       "true",
-		"yaml_block_rfc":           "true",
+		"yaml_l3_forwarding":            "true",
+		"yaml_block_rfc":                "true",
 		"yaml_host_forward_redirect_ip": "127.0.0.1",
-		"yaml_socks5_port":         "1080",
-		"yaml_http_port":           "8118",
-		"yaml_proxy_username":      "",
-		"yaml_proxy_password":      "",
-		"yaml_inbound_transparent": "true",
-		"yaml_socks5_udp":          "true",
-		"custom_yaml_enabled":      "false",
-		"custom_yaml":              "",
-		"acl_inbound_default":      "allow",
-		"acl_outbound_default":     "allow",
-		"acl_relay_default":        "deny",
+		"yaml_socks5_port":              "1080",
+		"yaml_http_port":                "8118",
+		"yaml_proxy_username":           "",
+		"yaml_proxy_password":           "",
+		"yaml_inbound_transparent":      "true",
+		"yaml_socks5_udp":               "true",
+		"custom_yaml_enabled":           "false",
+		"custom_yaml":                   "",
+		"acl_inbound_default":           "allow",
+		"acl_outbound_default":          "allow",
+		"acl_relay_default":             "deny",
 		// #! directives included in downloaded client configs
 		"client_config_tcp":           "",
 		"client_config_turn_url":      "",
@@ -801,6 +862,75 @@ func initGlobalSettings() {
 			gdb.Model(&GlobalConfig{}).Where("key = ?", k).Update("value", v)
 		}
 	}
+
+	bootstrapBuiltInGroups()
+}
+
+// bootstrapBuiltInGroups ensures the "default" and "admin" built-in groups
+// exist. Called once during init. Existing users/peers with no PrimaryGroup
+// are assigned to "default".
+func bootstrapBuiltInGroups() {
+	// Ensure "default" group exists with the first auto-assigned subnet.
+	var defaultGroup Group
+	if gdb.First(&defaultGroup, "name = ?", "default").Error != nil {
+		subnet, subnetV6 := nextAvailableGroupSubnet()
+		defaultGroup = Group{
+			Name:       "default",
+			Subnet:     subnet,
+			SubnetIPv6: subnetV6,
+			BuiltIn:    true,
+		}
+		gdb.Create(&defaultGroup)
+	}
+
+	// Ensure "admin" group exists (no subnet — it is a role group).
+	var adminGroup Group
+	if gdb.First(&adminGroup, "name = ?", "admin").Error != nil {
+		adminGroup = Group{Name: "admin", BuiltIn: true}
+		gdb.Create(&adminGroup)
+	}
+
+	// Migrate existing users: assign primary group and sync admin group membership.
+	var users []User
+	gdb.Find(&users)
+	for _, u := range users {
+		changed := false
+		if u.PrimaryGroup == "" {
+			u.PrimaryGroup = "default"
+			changed = true
+		}
+		// Sync IsAdmin → "admin" group membership in Tags.
+		groups := splitCSVList(u.Tags)
+		hasAdmin := containsToken(groups, "admin")
+		if u.IsAdmin && !hasAdmin {
+			groups = append(groups, "admin")
+			u.Tags = normalizeGroupList(groups)
+			changed = true
+		}
+		if hasAdmin && !u.IsAdmin {
+			u.IsAdmin = true
+			changed = true
+		}
+		if changed {
+			gdb.Save(&u)
+		}
+	}
+
+	// Migrate existing peers: assign primary group from user.
+	var peers []Peer
+	gdb.Find(&peers)
+	for _, p := range peers {
+		if p.PrimaryGroup != "" {
+			continue
+		}
+		var owner User
+		if gdb.First(&owner, p.UserID).Error == nil && owner.PrimaryGroup != "" {
+			p.PrimaryGroup = owner.PrimaryGroup
+		} else {
+			p.PrimaryGroup = "default"
+		}
+		gdb.Save(&p)
+	}
 }
 
 func getConfig(k string) string {
@@ -827,7 +957,7 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		r.Header.Set("X-User-Id", fmt.Sprint(user.ID))
-		r.Header.Set("X-Is-Admin", fmt.Sprint(user.IsAdmin))
+		r.Header.Set("X-Is-Admin", fmt.Sprint(userIsAdmin(user)))
 		next.ServeHTTP(w, r)
 	}
 }
@@ -984,6 +1114,7 @@ func handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name                string     `json:"name"`
 		Tags                string     `json:"tags"`
+		Groups              string     `json:"groups"`
 		PublicKey           string     `json:"public_key"`
 		NonceHash           string     `json:"nonce_hash"`
 		EncryptedPrivateKey string     `json:"encrypted_private_key"`
@@ -1021,13 +1152,22 @@ func handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Determine the primary group from the owner user (immutable after creation).
+	var peerPrimaryGroup string
+	if gdb.First(&user, userID).Error == nil {
+		peerPrimaryGroup = user.PrimaryGroup
+	}
+	if peerPrimaryGroup == "" {
+		peerPrimaryGroup = "default"
+	}
+
 	// Determine IP Address
 	var assignedIP string
 	if req.RequestedIP != "" && isAdmin {
 		assignedIP = req.RequestedIP
 	} else {
 		var err error
-		assignedIP, err = allocateIP()
+		assignedIP, err = allocateIPInGroup(peerPrimaryGroup)
 		if err != nil {
 			http.Error(w, "Subnet exhausted", http.StatusInternalServerError)
 			return
@@ -1041,7 +1181,8 @@ func handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 	peer := Peer{
 		UserID:              userID,
 		Name:                req.Name,
-		Tags:                joinCSVList(splitCSVList(req.Tags)),
+		PrimaryGroup:        peerPrimaryGroup,
+		Tags:                normalizeGroupList(append(splitCSVList(user.Tags), append(splitCSVList(req.Tags), splitCSVList(req.Groups)...)...)),
 		AssignedIPs:         assignedIP,
 		PublicKey:           req.PublicKey,
 		NonceHash:           req.NonceHash,
@@ -1318,6 +1459,7 @@ func handleUpdatePeer(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name               *string    `json:"name"`
 		Tags               *string    `json:"tags"`
+		Groups             *string    `json:"groups"`
 		AssignedIPs        *string    `json:"assigned_ips"`
 		Keepalive          *int       `json:"keepalive"`
 		Enabled            *bool      `json:"enabled"`
@@ -1337,8 +1479,11 @@ func handleUpdatePeer(w http.ResponseWriter, r *http.Request) {
 		peer.Name = *req.Name
 	}
 	aclNeedsRefresh := false
-	if req.Tags != nil && isAdmin {
-		peer.Tags = joinCSVList(splitCSVList(*req.Tags))
+	if req.Groups != nil && isAdmin {
+		peer.Tags = normalizeGroupList(splitCSVList(*req.Groups))
+		aclNeedsRefresh = true
+	} else if req.Tags != nil && isAdmin {
+		peer.Tags = normalizeGroupList(splitCSVList(*req.Tags))
 		aclNeedsRefresh = true
 	}
 	if req.AssignedIPs != nil && isAdmin {
@@ -1468,17 +1613,49 @@ func handleGetUsers(w http.ResponseWriter, r *http.Request) {
 
 func handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-		IsAdmin  bool   `json:"is_admin"`
-		Tags     string `json:"tags"`
+		Username     string `json:"username"`
+		Password     string `json:"password"`
+		IsAdmin      bool   `json:"is_admin"`
+		Tags         string `json:"tags"`   // legacy field
+		Groups       string `json:"groups"` // additional groups
+		PrimaryGroup string `json:"primary_group"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
+
+	// Merge legacy tags + groups fields.
+	additionalGroups := req.Groups
+	if additionalGroups == "" {
+		additionalGroups = req.Tags
+	}
+
+	// Default primary group to "default".
+	primaryGroup := normalizeGroupName(req.PrimaryGroup)
+	if primaryGroup == "" {
+		primaryGroup = "default"
+	}
+	if _, ok := primaryGroupExists(primaryGroup); !ok {
+		http.Error(w, "Primary group must exist and have a subnet", http.StatusBadRequest)
+		return
+	}
+
+	// The admin group is authoritative; the is_admin flag is accepted for legacy clients.
+	groups := splitCSVList(additionalGroups)
+	if req.IsAdmin && !containsToken(groups, "admin") {
+		groups = append(groups, "admin")
+	}
+	isAdmin := req.IsAdmin || containsToken(groups, "admin")
+
 	hp, _ := hashPassword(req.Password)
-	user := User{Username: req.Username, PasswordHash: hp, IsAdmin: req.IsAdmin, Tags: joinCSVList(splitCSVList(req.Tags))}
+	user := User{
+		Username:     req.Username,
+		PasswordHash: hp,
+		IsAdmin:      isAdmin,
+		PrimaryGroup: primaryGroup,
+		Tags:         normalizeGroupList(groups),
+	}
 	if err := gdb.Create(&user).Error; err != nil {
 		http.Error(w, "Username already exists", http.StatusConflict)
 		return
@@ -1494,20 +1671,59 @@ func handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Tags       *string `json:"tags"`
-		IsAdmin    *bool   `json:"is_admin"`
-		MaxConfigs *int    `json:"max_configs"`
-		Password   *string `json:"password"`
+		Tags         *string `json:"tags"` // legacy
+		Groups       *string `json:"groups"`
+		PrimaryGroup *string `json:"primary_group"`
+		IsAdmin      *bool   `json:"is_admin"`
+		MaxConfigs   *int    `json:"max_configs"`
+		Password     *string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
-	if req.Tags != nil {
-		user.Tags = joinCSVList(splitCSVList(*req.Tags))
+	// Accept both "groups" and legacy "tags" for the additional groups field.
+	if req.Groups != nil {
+		user.Tags = normalizeGroupList(splitCSVList(*req.Groups))
+	} else if req.Tags != nil {
+		user.Tags = normalizeGroupList(splitCSVList(*req.Tags))
+	}
+	if req.PrimaryGroup != nil {
+		pg := normalizeGroupName(*req.PrimaryGroup)
+		if pg != "" {
+			if _, ok := primaryGroupExists(pg); !ok {
+				http.Error(w, "Primary group must exist and have a subnet", http.StatusBadRequest)
+				return
+			}
+			user.PrimaryGroup = pg
+		}
 	}
 	if req.IsAdmin != nil {
 		user.IsAdmin = *req.IsAdmin
+		// Sync admin group membership.
+		groups := splitCSVList(user.Tags)
+		hasAdmin := containsToken(groups, "admin")
+		if *req.IsAdmin && !hasAdmin {
+			groups = append(groups, "admin")
+			user.Tags = normalizeGroupList(groups)
+		} else if !*req.IsAdmin && hasAdmin {
+			newGroups := make([]string, 0, len(groups))
+			for _, g := range groups {
+				if !strings.EqualFold(g, "admin") {
+					newGroups = append(newGroups, g)
+				}
+			}
+			user.Tags = normalizeGroupList(newGroups)
+		}
+	}
+	user.IsAdmin = containsToken(userGroups(user), "admin")
+	if user.ID == 1 && !user.IsAdmin {
+		groups := splitCSVList(user.Tags)
+		if !containsToken(groups, "admin") {
+			groups = append(groups, "admin")
+		}
+		user.Tags = normalizeGroupList(groups)
+		user.IsAdmin = true
 	}
 	if req.MaxConfigs != nil {
 		user.MaxConfigs = *req.MaxConfigs
@@ -1660,31 +1876,67 @@ func handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleGetTags(w http.ResponseWriter, r *http.Request) {
-	var tags []PolicyTag
-	gdb.Order("name asc").Find(&tags)
+	var groups []Group
+	gdb.Order("name asc").Find(&groups)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(tags)
+	json.NewEncoder(w).Encode(groups)
 }
 
 func handleCreateTag(w http.ResponseWriter, r *http.Request) {
-	var tag PolicyTag
+	var tag Group
 	if err := json.NewDecoder(r.Body).Decode(&tag); err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
-	tag.Name = strings.TrimSpace(tag.Name)
+	tag.Name = normalizeGroupName(tag.Name)
 	tag.ExtraCIDRs = joinCSVList(splitCSVList(tag.ExtraCIDRs))
-	tag.ParentTags = joinCSVList(splitCSVList(tag.ParentTags))
+	tag.ParentGroups = normalizeGroupList(splitCSVList(tag.ParentGroups))
 	if tag.Name == "" {
-		http.Error(w, "Tag name is required", http.StatusBadRequest)
+		http.Error(w, "Group name is required", http.StatusBadRequest)
 		return
 	}
-	if err := validatePolicyTagGraph(&tag); err != nil {
+	// If the caller requested a subnet but didn't supply one, auto-assign.
+	// If they supplied an empty Subnet explicitly, the group is non-primary-capable.
+	// If they didn't supply Subnet at all, it defaults to empty string (non-primary-capable).
+	// To auto-assign, the caller sends subnet="auto".
+	if strings.ToLower(strings.TrimSpace(tag.Subnet)) == "auto" {
+		s, sv6 := nextAvailableGroupSubnet()
+		tag.Subnet = s
+		if tag.SubnetIPv6 == "" {
+			tag.SubnetIPv6 = sv6
+		}
+	}
+	// Subnet is fixed after creation — ensure it's stored normalized.
+	if tag.Subnet != "" {
+		p, err := netip.ParsePrefix(tag.Subnet)
+		if err != nil {
+			http.Error(w, "Invalid subnet: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if !p.Addr().Is4() {
+			http.Error(w, "Group subnet must be IPv4", http.StatusBadRequest)
+			return
+		}
+		tag.Subnet = p.Masked().String()
+	}
+	if tag.SubnetIPv6 != "" {
+		p, err := netip.ParsePrefix(tag.SubnetIPv6)
+		if err != nil {
+			http.Error(w, "Invalid IPv6 subnet: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if !p.Addr().Is6() || p.Addr().Is4() {
+			http.Error(w, "Group IPv6 subnet must be IPv6", http.StatusBadRequest)
+			return
+		}
+		tag.SubnetIPv6 = p.Masked().String()
+	}
+	if err := validateGroupGraph(&tag); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if err := gdb.Create(&tag).Error; err != nil {
-		http.Error(w, "Tag already exists", http.StatusConflict)
+		http.Error(w, "Group already exists", http.StatusConflict)
 		return
 	}
 	generateCanonicalYAML()
@@ -1694,27 +1946,29 @@ func handleCreateTag(w http.ResponseWriter, r *http.Request) {
 
 func handleUpdateTag(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	var tag PolicyTag
+	var tag Group
 	if err := gdb.First(&tag, id).Error; err != nil {
-		http.Error(w, "Tag not found", http.StatusNotFound)
+		http.Error(w, "Group not found", http.StatusNotFound)
 		return
 	}
-	var req PolicyTag
+	var req Group
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
-	if strings.TrimSpace(req.Name) != "" {
-		tag.Name = strings.TrimSpace(req.Name)
+	// Built-in groups keep their names; others can be renamed.
+	if !tag.BuiltIn && strings.TrimSpace(req.Name) != "" {
+		tag.Name = normalizeGroupName(req.Name)
 	}
 	tag.ExtraCIDRs = joinCSVList(splitCSVList(req.ExtraCIDRs))
-	tag.ParentTags = joinCSVList(splitCSVList(req.ParentTags))
-	if err := validatePolicyTagGraph(&tag); err != nil {
+	tag.ParentGroups = normalizeGroupList(splitCSVList(req.ParentGroups))
+	// Subnet is immutable after creation — silently ignore changes.
+	if err := validateGroupGraph(&tag); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if err := gdb.Save(&tag).Error; err != nil {
-		http.Error(w, "Failed to update tag", http.StatusConflict)
+		http.Error(w, "Failed to update group", http.StatusConflict)
 		return
 	}
 	generateCanonicalYAML()
@@ -1724,7 +1978,22 @@ func handleUpdateTag(w http.ResponseWriter, r *http.Request) {
 
 func handleDeleteTag(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	gdb.Delete(&PolicyTag{}, id)
+	var tag Group
+	if gdb.First(&tag, id).Error == nil && tag.BuiltIn {
+		http.Error(w, "Cannot delete built-in group", http.StatusForbidden)
+		return
+	}
+	if tag.Name != "" {
+		var userCount int64
+		gdb.Model(&User{}).Where("primary_group = ?", tag.Name).Count(&userCount)
+		var peerCount int64
+		gdb.Model(&Peer{}).Where("primary_group = ?", tag.Name).Count(&peerCount)
+		if userCount > 0 || peerCount > 0 {
+			http.Error(w, "Cannot delete a group used as a primary group", http.StatusConflict)
+			return
+		}
+	}
+	gdb.Delete(&Group{}, id)
 	generateCanonicalYAML()
 	pushACLsToDaemon()
 	w.WriteHeader(http.StatusNoContent)
@@ -1822,12 +2091,16 @@ func handleACLTokenSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Tags
-	var tags []PolicyTag
-	gdb.Order("name asc").Find(&tags)
-	for _, t := range tags {
-		if q == "" || strings.Contains(strings.ToLower(t.Name), q) {
-			results = append(results, token{"tag", t.Name, t.Name})
+	// Groups
+	var groups []Group
+	gdb.Order("name asc").Find(&groups)
+	for _, g := range groups {
+		label := g.Name
+		if g.Subnet != "" {
+			label = g.Name + " (" + g.Subnet + ")"
+		}
+		if q == "" || strings.Contains(strings.ToLower(g.Name), q) {
+			results = append(results, token{"tag", g.Name, label})
 		}
 	}
 
@@ -2219,6 +2492,191 @@ func pushACLsToDaemon() {
 }
 
 // --- IP Allocation & Logic ---
+
+// nextAvailableGroupSubnet finds the next free subnet block in the configured
+// group base pool. Returns empty strings if the pool is exhausted or misconfigured.
+func nextAvailableGroupSubnet() (subnetV4, subnetV6 string) {
+	base := getConfig("group_base_subnet")
+	bitsStr := getConfig("group_subnet_bits")
+	bits, err := strconv.Atoi(bitsStr)
+	if err != nil || base == "" {
+		return "", ""
+	}
+	basePrefix, err := netip.ParsePrefix(base)
+	if err != nil {
+		return "", ""
+	}
+	if bits <= basePrefix.Bits() {
+		return "", ""
+	}
+
+	// Collect all assigned group subnets.
+	var groups []Group
+	gdb.Find(&groups)
+	used := map[string]bool{}
+	for _, g := range groups {
+		if g.Subnet != "" {
+			used[g.Subnet] = true
+		}
+	}
+
+	// Walk /bits blocks within the base prefix.
+	addr := basePrefix.Addr()
+	for {
+		candidate := netip.PrefixFrom(addr, bits).Masked()
+		if !basePrefix.Contains(candidate.Addr()) {
+			break
+		}
+		if !used[candidate.String()] {
+			subnetV4 = candidate.String()
+			break
+		}
+		// Advance by 2^(128-bits) addresses.
+		addr = advanceBySubnet(addr, bits)
+	}
+
+	// IPv6 counterpart.
+	baseV6 := getConfig("group_base_subnet_ipv6")
+	bitsV6Str := getConfig("group_subnet_ipv6_bits")
+	bitsV6, err := strconv.Atoi(bitsV6Str)
+	if err == nil && baseV6 != "" {
+		basePrefV6, err2 := netip.ParsePrefix(baseV6)
+		if err2 == nil && bitsV6 > basePrefV6.Bits() {
+			usedV6 := map[string]bool{}
+			for _, g := range groups {
+				if g.SubnetIPv6 != "" {
+					usedV6[g.SubnetIPv6] = true
+				}
+			}
+			addrV6 := basePrefV6.Addr()
+			for {
+				candidate := netip.PrefixFrom(addrV6, bitsV6).Masked()
+				if !basePrefV6.Contains(candidate.Addr()) {
+					break
+				}
+				if !usedV6[candidate.String()] {
+					subnetV6 = candidate.String()
+					break
+				}
+				addrV6 = advanceBySubnet(addrV6, bitsV6)
+			}
+		}
+	}
+	return subnetV4, subnetV6
+}
+
+// advanceBySubnet moves addr forward by one prefix-sized block.
+func advanceBySubnet(addr netip.Addr, bits int) netip.Addr {
+	if addr.Is4() {
+		if bits < 0 || bits > 32 {
+			return netip.Addr{}
+		}
+		raw := addr.As4()
+		n := binary.BigEndian.Uint32(raw[:])
+		if bits < 32 {
+			n += uint32(1) << uint(32-bits)
+		} else {
+			n++
+		}
+		var out [4]byte
+		binary.BigEndian.PutUint32(out[:], n)
+		return netip.AddrFrom4(out)
+	}
+	if bits < 0 || bits > 128 {
+		return netip.Addr{}
+	}
+	step := new(big.Int).Lsh(big.NewInt(1), uint(128-bits))
+	rawAddr := addr.As16()
+	n := new(big.Int).SetBytes(rawAddr[:])
+	n.Add(n, step)
+	raw := n.FillBytes(make([]byte, 16))
+	a, _ := netip.AddrFromSlice(raw)
+	return a
+}
+
+// allocateIPInGroup allocates the next free /32 (IPv4) and /128 (IPv6) within
+// the given group's subnet. Falls back to the global pool if the group has no
+// subnet or is not found.
+func allocateIPInGroup(groupName string) (string, error) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Look up the group's subnet.
+	var group Group
+	useGroupSubnet := false
+	if groupName != "" {
+		if err := gdb.First(&group, "name = ?", strings.ToLower(strings.TrimSpace(groupName))).Error; err == nil {
+			useGroupSubnet = group.Subnet != ""
+		}
+	}
+
+	// Build the used-IP map from all peers.
+	var assignedIPs []string
+	gdb.Model(&Peer{}).Pluck("assigned_ips", &assignedIPs)
+	usedMap := make(map[string]bool)
+	for _, u := range assignedIPs {
+		for _, part := range strings.Split(u, ",") {
+			ip, _, _ := strings.Cut(strings.TrimSpace(part), "/")
+			usedMap[ip] = true
+		}
+	}
+
+	// IPv4 allocation.
+	subnetV4 := getConfig("client_subnet_ipv4")
+	if useGroupSubnet {
+		subnetV4 = group.Subnet
+	}
+	prefV4, err := netip.ParsePrefix(subnetV4)
+	if err != nil {
+		return "", fmt.Errorf("v4 subnet: %w", err)
+	}
+	v4 := ""
+	addr := prefV4.Addr()
+	for {
+		addr = addr.Next()
+		if !prefV4.Contains(addr) {
+			break
+		}
+		sl := addr.As4()
+		if sl[3] == 0 || sl[3] == 1 || sl[3] == 255 {
+			continue
+		}
+		if !usedMap[addr.String()] {
+			v4 = addr.String() + "/32"
+			break
+		}
+	}
+	if v4 == "" {
+		return "", fmt.Errorf("ipv4 subnet %s exhausted", subnetV4)
+	}
+
+	// IPv6 allocation.
+	subnetV6 := getConfig("client_subnet_ipv6")
+	if useGroupSubnet && group.SubnetIPv6 != "" {
+		subnetV6 = group.SubnetIPv6
+	}
+	prefV6, err := netip.ParsePrefix(subnetV6)
+	if err != nil {
+		return v4, nil
+	}
+	v6 := ""
+	for i := 0; i < 10; i++ {
+		suffix := make([]byte, 8)
+		rand.Read(suffix)
+		raw := prefV6.Addr().As16()
+		copy(raw[8:], suffix)
+		v6Addr, _ := netip.AddrFromSlice(raw[:])
+		if !usedMap[v6Addr.String()] {
+			v6 = v6Addr.String() + "/128"
+			break
+		}
+	}
+	if v6 == "" {
+		return v4, nil
+	}
+	return v4 + ", " + v6, nil
+}
+
 func allocateIP() (string, error) {
 	mu.Lock()
 	defer mu.Unlock()

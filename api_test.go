@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"os"
 	"strings"
@@ -43,6 +44,85 @@ func createTestUser(t *testing.T, username string, isAdmin bool) (User, string) 
 	}
 	gdb.Create(&user)
 	return user, user.Token
+}
+
+func TestAdminGroupControlsAdminStatus(t *testing.T) {
+	setupTestDB(t)
+	createTestUser(t, "owner", false)
+	body := bytes.NewBufferString(`{"username":"group-admin","password":"password","primary_group":"default","groups":"admin"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/users", body)
+	w := httptest.NewRecorder()
+	handleCreateUser(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create user status = %d: %s", w.Code, w.Body.String())
+	}
+
+	var user User
+	if err := gdb.First(&user, "username = ?", "group-admin").Error; err != nil {
+		t.Fatal(err)
+	}
+	if !user.IsAdmin || !userIsAdmin(user) {
+		t.Fatalf("admin group did not grant admin status: %+v", user)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/api/admin/users/1", bytes.NewBufferString(`{"groups":""}`))
+	req.SetPathValue("id", fmt.Sprint(user.ID))
+	w = httptest.NewRecorder()
+	handleUpdateUser(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("update user status = %d: %s", w.Code, w.Body.String())
+	}
+	if err := gdb.First(&user, user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if user.IsAdmin || hasAdminGroup(user.Tags) {
+		t.Fatalf("removing admin group did not revoke admin status: is_admin=%v groups=%q", user.IsAdmin, user.Tags)
+	}
+}
+
+func TestPrimaryGroupSubnetAllocationAndPeerGroupInheritance(t *testing.T) {
+	setupTestDB(t)
+	group := Group{Name: "engineering", Subnet: "100.100.4.0/22", SubnetIPv6: "fd00:0:0:1::/64"}
+	if err := gdb.Create(&group).Error; err != nil {
+		t.Fatal(err)
+	}
+	user, token := createTestUser(t, "alice", false)
+	user.PrimaryGroup = "engineering"
+	user.Tags = "staff"
+	if err := gdb.Save(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/peers", bytes.NewBufferString(`{"name":"phone","public_key":"pub","groups":"laptop"}`))
+	req.Header.Set("X-User-Id", fmt.Sprint(user.ID))
+	req.Header.Set("X-Is-Admin", "false")
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	handleCreatePeer(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("create peer status = %d: %s", w.Code, w.Body.String())
+	}
+
+	var peer Peer
+	if err := gdb.First(&peer, "name = ?", "phone").Error; err != nil {
+		t.Fatal(err)
+	}
+	if peer.PrimaryGroup != "engineering" {
+		t.Fatalf("peer primary group = %q, want engineering", peer.PrimaryGroup)
+	}
+	if !strings.Contains(peer.Tags, "staff") || !strings.Contains(peer.Tags, "laptop") {
+		t.Fatalf("peer groups = %q, want inherited staff plus laptop", peer.Tags)
+	}
+	if !strings.HasPrefix(peer.AssignedIPs, "100.100.4.") {
+		t.Fatalf("peer assigned IPs = %q, want engineering subnet", peer.AssignedIPs)
+	}
+}
+
+func TestAdvanceBySubnetIPv4UsesPrefixBlockSize(t *testing.T) {
+	start := netip.MustParseAddr("100.100.0.0")
+	if got := advanceBySubnet(start, 22); got.String() != "100.100.4.0" {
+		t.Fatalf("advance /22 = %s, want 100.100.4.0", got)
+	}
 }
 
 func TestAPIPeerVisibility(t *testing.T) {

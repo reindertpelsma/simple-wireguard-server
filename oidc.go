@@ -23,6 +23,12 @@ type oidcUserinfo struct {
 	PreferredUsername string `json:"preferred_username"`
 	Email             string `json:"email"`
 	Name              string `json:"name"`
+	// Groups / roles from the OIDC provider. When set on first login they are
+	// used to populate the user's group memberships. Subsequent logins do NOT
+	// update groups (admin can manage them manually after first sync).
+	Groups []string `json:"groups"`
+	// The OIDC claim key for groups varies by provider; check common aliases.
+	Roles []string `json:"roles"`
 }
 
 func oidcEnabled() bool {
@@ -215,12 +221,41 @@ func userForOIDC(info oidcUserinfo) (User, error) {
 	username = uniqueOIDCUsername(username)
 	sub := info.Subject
 	hash, _ := hashPassword(randomSecret(24))
+
+	// Merge groups from OIDC provider (Groups + Roles claims).
+	oidcGroups := append(info.Groups, info.Roles...)
+	additionalGroups := []string{}
+	primaryGroup := "default"
+	isAdmin := false
+	for _, g := range oidcGroups {
+		g = strings.ToLower(strings.TrimSpace(g))
+		if g == "" {
+			continue
+		}
+		if g == "admin" || g == "administrators" {
+			isAdmin = true
+			additionalGroups = append(additionalGroups, "admin")
+		} else {
+			// Validate that the group exists in the DB before assigning.
+			var dbGroup Group
+			if gdb.First(&dbGroup, "name = ?", g).Error == nil {
+				additionalGroups = append(additionalGroups, g)
+				if dbGroup.Subnet != "" && primaryGroup == "default" {
+					primaryGroup = g
+				}
+			}
+		}
+	}
+
 	user = User{
 		Username:     username,
 		PasswordHash: hash,
 		OIDCProvider: provider,
 		OIDCSubject:  &sub,
 		MaxConfigs:   10,
+		IsAdmin:      isAdmin,
+		PrimaryGroup: primaryGroup,
+		Tags:         joinCSVList(additionalGroups),
 	}
 	return user, gdb.Create(&user).Error
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeftRight, Plus, Trash2 } from 'lucide-react';
 import { api } from '../lib/api';
 
@@ -103,15 +103,25 @@ export default function ForwardsTab() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
 
-  async function fetchForwards() {
+  const fetchForwards = useCallback(async () => {
     try {
       setForwards(await api.getForwards());
     } catch (err) {
       console.error(err);
     }
-  }
+  }, []);
 
-  useEffect(() => { fetchForwards(); }, []);
+  useEffect(() => {
+    let cancelled = false;
+    api.getForwards()
+      .then((data) => {
+        if (!cancelled) setForwards(data);
+      })
+      .catch((err) => console.error(err));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleCreate = async (data) => {
     try {

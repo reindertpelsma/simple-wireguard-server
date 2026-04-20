@@ -219,7 +219,7 @@ function ShareModal({ peer, onClose }) {
 function EditPeerModal({ peer, isAdmin, onClose, onSave }) {
   const [form, setForm] = useState({
     name: peer.name,
-    tags: peer.tags || '',
+    groups: peer.groups || peer.tags || '',
     assigned_ips: peer.assigned_ips,
     static_endpoint: peer.static_endpoint || '',
     keepalive: peer.keepalive ? String(peer.keepalive) : '',
@@ -235,7 +235,7 @@ function EditPeerModal({ peer, isAdmin, onClose, onSave }) {
     event.preventDefault();
     await onSave(peer.id, {
       name: form.name,
-      ...(isAdmin ? { tags: form.tags } : {}),
+      ...(isAdmin ? { groups: form.groups } : {}),
       ...(isAdmin ? { assigned_ips: form.assigned_ips } : {}),
       static_endpoint: form.static_endpoint,
       keepalive: form.keepalive.trim() === '' ? 0 : Number.parseInt(form.keepalive, 10),
@@ -280,8 +280,8 @@ function EditPeerModal({ peer, isAdmin, onClose, onSave }) {
 
           {isAdmin && (
             <div className="space-y-2">
-              <label className="field-label">Policy tags</label>
-              <input className="input-field" placeholder="admins, lab" value={form.tags} onChange={(event) => setForm({ ...form, tags: event.target.value })} />
+              <label className="field-label">Additional groups</label>
+              <input className="input-field" placeholder="staff, lab" value={form.groups} onChange={(event) => setForm({ ...form, groups: event.target.value })} />
             </div>
           )}
 
@@ -489,6 +489,7 @@ export default function PeersTab({ isAdmin, currentUsername, onSelectPeer }) {
                             <h4 className="text-xl font-black tracking-tight">{peer.name}</h4>
                             {!peer.enabled && <span className="status-chip status-chip-danger">Disabled</span>}
                             {peer.is_distribute && <span className="status-chip"><Share2 size={12} /> Distribute peer</span>}
+                            {peer.primary_group && <span className="status-chip status-chip-muted">Primary {peer.primary_group}</span>}
                             {peer.is_manual_key && <span className="status-chip status-chip-muted"><Lock size={12} /> Manual key</span>}
                             {peer.keepalive > 0 && <span className="status-chip">Keepalive {peer.keepalive}s</span>}
                             {hasShaper && <span className="status-chip">Shaped</span>}

@@ -58,7 +58,7 @@ func TestACLTagInheritanceExpandsDaemonPayload(t *testing.T) {
 	if err := gdb.Create(&PolicyTag{Name: "staff"}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := gdb.Create(&PolicyTag{Name: "admins", ParentTags: "staff", ExtraCIDRs: "100.64.88.0/24"}).Error; err != nil {
+	if err := gdb.Create(&PolicyTag{Name: "admins", ParentGroups: "staff", ExtraCIDRs: "100.64.88.0/24"}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := gdb.Create(&ACLRule{ListName: "outbound", Action: "allow", SrcTags: "staff", Dst: "100.64.10.10/32", Proto: "tcp", DPort: "443"}).Error; err != nil {
@@ -91,7 +91,7 @@ func TestPolicyTagInheritanceRejectsCycles(t *testing.T) {
 	if err := gdb.Create(&PolicyTag{Name: "staff"}).Error; err != nil {
 		t.Fatal(err)
 	}
-	admins := PolicyTag{Name: "admins", ParentTags: "staff"}
+	admins := PolicyTag{Name: "admins", ParentGroups: "staff"}
 	if err := validatePolicyTagGraph(&admins); err != nil {
 		t.Fatalf("expected acyclic graph to validate: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestPolicyTagInheritanceRejectsCycles(t *testing.T) {
 	if err := gdb.First(&staff, "name = ?", "staff").Error; err != nil {
 		t.Fatal(err)
 	}
-	staff.ParentTags = "admins"
+	staff.ParentGroups = "admins"
 	if err := validatePolicyTagGraph(&staff); err == nil {
 		t.Fatal("expected inherited tag cycle to be rejected")
 	}
@@ -146,7 +146,7 @@ func TestAccessProxyACLUsesInheritedAuthenticatedUserTags(t *testing.T) {
 	if err := gdb.Create(&PolicyTag{Name: "staff"}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := gdb.Create(&PolicyTag{Name: "admins", ParentTags: "staff"}).Error; err != nil {
+	if err := gdb.Create(&PolicyTag{Name: "admins", ParentGroups: "staff"}).Error; err != nil {
 		t.Fatal(err)
 	}
 	user, _ := createTestUser(t, "alice", false)

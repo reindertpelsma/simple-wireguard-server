@@ -11,18 +11,13 @@ const TOKEN_COLORS = {
   peer: 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200',
   cidr: 'bg-[var(--surface-soft)] text-[var(--ink)] border border-[var(--border)]',
 };
-const TOKEN_LABELS = { user: 'user', tag: 'tag', peer: 'peer', cidr: '' };
+const TOKEN_LABELS = { user: 'user', tag: 'group', peer: 'peer', cidr: '' };
 
 function guessTokenType(value) {
   if (value.startsWith('user:')) return { type: 'user', value: value.slice(5) };
   if (value.startsWith('tag:'))  return { type: 'tag',  value: value.slice(4) };
   if (value.startsWith('peer:')) return { type: 'peer', value: value.slice(5) };
   return { type: 'cidr', value };
-}
-
-function encodeToken(type, value) {
-  if (type === 'cidr') return value;
-  return `${type}:${value}`;
 }
 
 // Parse the combined fields from an ACL rule into a token list
@@ -279,12 +274,12 @@ function RuleForm({ initial, onSave, onCancel, listName }) {
       </div>
 
       <div className="space-y-1.5">
-        <label className="field-label">Source <span className="font-normal text-[var(--muted)] normal-case">— users, tags, peers, IPs/CIDRs</span></label>
+        <label className="field-label">Source <span className="font-normal text-[var(--muted)] normal-case">— users, groups, peers, IPs/CIDRs</span></label>
         <TokenInput tokens={srcTokens} onChange={setSrcTokens} placeholder="any source — type to search or enter an IP/CIDR" />
       </div>
 
       <div className="space-y-1.5">
-        <label className="field-label">Destination <span className="font-normal text-[var(--muted)] normal-case">— users, tags, peers, IPs/CIDRs</span></label>
+        <label className="field-label">Destination <span className="font-normal text-[var(--muted)] normal-case">— users, groups, peers, IPs/CIDRs</span></label>
         <TokenInput tokens={dstTokens} onChange={setDstTokens} placeholder="any destination — type to search or enter an IP/CIDR" />
       </div>
 
@@ -309,7 +304,7 @@ export default function ACLsTab() {
   const [dragging, setDragging] = useState(null);
   const [dragOver, setDragOver] = useState(null);
 
-  async function fetchACLs() {
+  const fetchACLs = useCallback(async function() {
     try {
       const [data, config] = await Promise.all([api.getACLs(), api.getAdminConfig()]);
       setACLs(data);
@@ -321,9 +316,25 @@ export default function ACLsTab() {
     } catch (err) {
       console.error(err);
     }
-  }
+  }, []);
 
-  useEffect(() => { fetchACLs(); }, []);
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([api.getACLs(), api.getAdminConfig()])
+      .then(([data, config]) => {
+        if (cancelled) return;
+        setACLs(data);
+        setDefaults({
+          inbound: config.acl_inbound_default || 'allow',
+          outbound: config.acl_outbound_default || 'allow',
+          relay: config.acl_relay_default || 'deny',
+        });
+      })
+      .catch((err) => console.error(err));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const listRules = acls.filter(a => a.list_name === activeList);
   const displayRules = orderedIds
