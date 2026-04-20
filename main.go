@@ -28,6 +28,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -103,6 +104,15 @@ func resolvePath(name string) string {
 		return name
 	}
 	return filepath.Join(*dataDir, name)
+}
+
+func daemonAPIListenAddress(addr string) string {
+	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
+		if u, err := url.Parse(addr); err == nil && u.Host != "" {
+			return u.Host
+		}
+	}
+	return addr
 }
 
 func hasNetAdmin() bool {
@@ -251,6 +261,7 @@ type TunnelForward struct {
 	Listen        string `gorm:"not null" json:"listen"`
 	Target        string `gorm:"not null" json:"target"`
 	ProxyProtocol string `json:"proxy_protocol,omitempty"` // "", "v1", "v2"
+	RuntimeName   string `json:"runtime_name,omitempty"`   // daemon-side name returned by /v1/forwards
 	SortOrder     int    `gorm:"default:0" json:"sort_order"`
 }
 
@@ -2152,35 +2163,82 @@ func handleCreateForward(w http.ResponseWriter, r *http.Request) {
 	}
 	var maxOrder int
 	gdb.Model(&TunnelForward{}).Select("COALESCE(MAX(sort_order), -1)").Scan(&maxOrder)
+	f.ID = 0
+	f.RuntimeName = ""
 	f.SortOrder = maxOrder + 1
-	gdb.Create(&f)
+	if err := gdb.Create(&f).Error; err != nil {
+		http.Error(w, "Failed to save forward", http.StatusInternalServerError)
+		return
+	}
 	generateCanonicalYAML()
-	restartManagedDaemon()
+	if runtimeName, err := pushForwardToDaemon(f); err != nil {
+		log.Printf("Live forward push failed (%s -> %s), falling back to restart: %v", f.Listen, f.Target, err)
+		go restartManagedDaemonIfEnabled()
+	} else {
+		f.RuntimeName = runtimeName
+		gdb.Model(&f).Update("runtime_name", runtimeName)
+	}
 	w.WriteHeader(http.StatusCreated)
 }
 
 func handleUpdateForward(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var existing TunnelForward
+	if err := gdb.First(&existing, id).Error; err != nil {
+		http.Error(w, "Not found", http.StatusNotFound)
+		return
+	}
+	var req TunnelForward
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.Proto == "" || req.Listen == "" || req.Target == "" {
+		http.Error(w, "proto, listen, and target are required", http.StatusBadRequest)
+		return
+	}
+	f := existing
+	f.Name = req.Name
+	f.Reverse = req.Reverse
+	f.Proto = req.Proto
+	f.Listen = req.Listen
+	f.Target = req.Target
+	f.ProxyProtocol = req.ProxyProtocol
+	f.SortOrder = req.SortOrder
+	if f.SortOrder == 0 && existing.SortOrder != 0 {
+		f.SortOrder = existing.SortOrder
+	}
+	oldRuntimeName := findDaemonForwardName(existing)
+	f.RuntimeName = ""
+	if err := gdb.Save(&f).Error; err != nil {
+		http.Error(w, "Failed to save forward", http.StatusInternalServerError)
+		return
+	}
+	generateCanonicalYAML()
+	if runtimeName, err := applyForwardChangeLive(oldRuntimeName, f); err != nil {
+		log.Printf("Live forward update failed (%s -> %s), falling back to restart: %v", f.Listen, f.Target, err)
+		go restartManagedDaemonIfEnabled()
+	} else {
+		f.RuntimeName = runtimeName
+		gdb.Model(&f).Update("runtime_name", runtimeName)
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func handleDeleteForward(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var f TunnelForward
 	if err := gdb.First(&f, id).Error; err != nil {
 		http.Error(w, "Not found", http.StatusNotFound)
 		return
 	}
-	if err := json.NewDecoder(r.Body).Decode(&f); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
-		return
-	}
-	gdb.Save(&f)
-	generateCanonicalYAML()
-	restartManagedDaemon()
-	w.WriteHeader(http.StatusOK)
-}
-
-func handleDeleteForward(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	runtimeName := findDaemonForwardName(f)
 	gdb.Delete(&TunnelForward{}, id)
 	generateCanonicalYAML()
-	restartManagedDaemon()
+	if err := removeForwardFromDaemon(runtimeName); err != nil {
+		log.Printf("Live forward delete failed (%s), falling back to restart: %v", runtimeName, err)
+		go restartManagedDaemonIfEnabled()
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -2939,6 +2997,105 @@ func applyTransportChangeLive(oldName string, t TransportConfig) {
 	}
 }
 
+type daemonForwardSnapshot struct {
+	Name          string `json:"name"`
+	Reverse       bool   `json:"reverse"`
+	Proto         string `json:"proto"`
+	Listen        string `json:"listen"`
+	Target        string `json:"target"`
+	ProxyProtocol string `json:"proxy_protocol,omitempty"`
+}
+
+func forwardToDaemonPayload(f TunnelForward) map[string]interface{} {
+	payload := map[string]interface{}{
+		"reverse": f.Reverse,
+		"proto":   f.Proto,
+		"listen":  f.Listen,
+		"target":  f.Target,
+	}
+	if f.ProxyProtocol != "" {
+		payload["proxy_protocol"] = f.ProxyProtocol
+	}
+	return payload
+}
+
+func pushForwardToDaemon(f TunnelForward) (string, error) {
+	payload := forwardToDaemonPayload(f)
+	b, _ := json.Marshal(payload)
+	resp, err := uwgRequest("POST", "/v1/forwards", bytes.NewBuffer(b))
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return "", fmt.Errorf("daemon returned %d for forward push: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var out daemonForwardSnapshot
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", fmt.Errorf("decode forward response: %w", err)
+	}
+	if out.Name == "" {
+		return "", errors.New("daemon forward response missing name")
+	}
+	return out.Name, nil
+}
+
+func removeForwardFromDaemon(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return nil
+	}
+	resp, err := uwgRequest("DELETE", "/v1/forwards?name="+url.QueryEscape(name), nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return fmt.Errorf("daemon returned %d for forward delete: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+}
+
+func applyForwardChangeLive(oldRuntimeName string, f TunnelForward) (string, error) {
+	if err := removeForwardFromDaemon(oldRuntimeName); err != nil {
+		return "", err
+	}
+	return pushForwardToDaemon(f)
+}
+
+func findDaemonForwardName(f TunnelForward) string {
+	if strings.TrimSpace(f.RuntimeName) != "" {
+		return f.RuntimeName
+	}
+	resp, err := uwgRequest("GET", "/v1/forwards", nil)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	var forwards []daemonForwardSnapshot
+	if err := json.NewDecoder(resp.Body).Decode(&forwards); err != nil {
+		return ""
+	}
+	for _, rt := range forwards {
+		if forwardSnapshotsMatch(f, rt) {
+			return rt.Name
+		}
+	}
+	return ""
+}
+
+func forwardSnapshotsMatch(f TunnelForward, rt daemonForwardSnapshot) bool {
+	return f.Reverse == rt.Reverse &&
+		strings.EqualFold(strings.TrimSpace(f.Proto), strings.TrimSpace(rt.Proto)) &&
+		strings.TrimSpace(f.Listen) == strings.TrimSpace(rt.Listen) &&
+		strings.TrimSpace(f.Target) == strings.TrimSpace(rt.Target) &&
+		strings.TrimSpace(f.ProxyProtocol) == strings.TrimSpace(rt.ProxyProtocol)
+}
+
 func syncPeersToDaemon() {
 	log.Println("Syncing peers to uwgsocks daemon...")
 	var peers []Peer
@@ -3003,7 +3160,7 @@ func buildCanonicalYAMLBytes(applyCustom bool) []byte {
 	mtu, _ := strconv.Atoi(getConfig("global_mtu"))
 
 	// Ensure unix sockets are absolute paths relative to dataDir
-	apiListen := *uwgsocksURL
+	apiListen := daemonAPIListenAddress(*uwgsocksURL)
 	if strings.HasPrefix(apiListen, "unix://") {
 		socketPath := strings.TrimPrefix(apiListen, "unix://")
 		if !filepath.IsAbs(socketPath) {

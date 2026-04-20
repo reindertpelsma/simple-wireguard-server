@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -670,6 +671,105 @@ func TestPeerTrafficShaperUpdatePushesDaemonAPI(t *testing.T) {
 	}
 	if shaper["upload_bps"].(float64) != 1200000 || shaper["download_bps"].(float64) != 3400000 || shaper["latency_ms"].(float64) != 25 {
 		t.Fatalf("unexpected daemon shaper payload: %+v", shaper)
+	}
+}
+
+func TestForwardCRUDUsesDaemonRuntimeAPI(t *testing.T) {
+	setupTestDB(t)
+
+	type daemonCall struct {
+		Method string
+		Path   string
+		Query  string
+		Body   map[string]interface{}
+	}
+	var calls []daemonCall
+	postCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := daemonCall{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery}
+		if r.Body != nil {
+			body, _ := io.ReadAll(r.Body)
+			if len(bytes.TrimSpace(body)) > 0 {
+				if err := json.Unmarshal(body, &call.Body); err != nil {
+					t.Fatalf("decode daemon request body: %v", err)
+				}
+			}
+		}
+		calls = append(calls, call)
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/forwards":
+			postCount++
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprintf(w, `{"name":"forward.dynamic.%d","reverse":%v,"proto":%q,"listen":%q,"target":%q}`,
+				postCount, call.Body["reverse"], call.Body["proto"], call.Body["listen"], call.Body["target"])
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/forwards":
+			if r.URL.Query().Get("name") == "" {
+				t.Fatalf("delete forward missing name")
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected daemon request: %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+	}))
+	defer server.Close()
+
+	oldURL, oldToken := *uwgsocksURL, *uwgsocksToken
+	defer func() {
+		*uwgsocksURL = oldURL
+		*uwgsocksToken = oldToken
+	}()
+	*uwgsocksURL = server.URL
+	*uwgsocksToken = ""
+
+	createBody := bytes.NewBufferString(`{"name":"web","reverse":false,"proto":"tcp","listen":"127.0.0.1:18080","target":"100.64.0.2:80","proxy_protocol":"v1"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/forwards", createBody)
+	w := httptest.NewRecorder()
+	handleCreateForward(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create forward status = %d: %s", w.Code, w.Body.String())
+	}
+	var saved TunnelForward
+	if err := gdb.First(&saved, "name = ?", "web").Error; err != nil {
+		t.Fatal(err)
+	}
+	if saved.RuntimeName != "forward.dynamic.1" {
+		t.Fatalf("runtime name after create = %q", saved.RuntimeName)
+	}
+	if len(calls) != 1 || calls[0].Method != http.MethodPost || calls[0].Body["listen"] != "127.0.0.1:18080" || calls[0].Body["proxy_protocol"] != "v1" {
+		t.Fatalf("unexpected create calls: %+v", calls)
+	}
+
+	updateBody := bytes.NewBufferString(`{"name":"web","reverse":true,"proto":"tcp","listen":"100.64.0.1:18081","target":"127.0.0.1:8081"}`)
+	req = httptest.NewRequest(http.MethodPatch, "/api/admin/forwards/"+fmt.Sprint(saved.ID), updateBody)
+	req.SetPathValue("id", fmt.Sprint(saved.ID))
+	w = httptest.NewRecorder()
+	handleUpdateForward(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("update forward status = %d: %s", w.Code, w.Body.String())
+	}
+	if err := gdb.First(&saved, saved.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if saved.RuntimeName != "forward.dynamic.2" {
+		t.Fatalf("runtime name after update = %q", saved.RuntimeName)
+	}
+	if len(calls) != 3 || calls[1].Method != http.MethodDelete || calls[1].Query != "name=forward.dynamic.1" || calls[2].Method != http.MethodPost {
+		t.Fatalf("unexpected update calls: %+v", calls)
+	}
+	if calls[2].Body["reverse"] != true || calls[2].Body["listen"] != "100.64.0.1:18081" || calls[2].Body["target"] != "127.0.0.1:8081" {
+		t.Fatalf("unexpected update payload: %+v", calls[2].Body)
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/admin/forwards/"+fmt.Sprint(saved.ID), nil)
+	req.SetPathValue("id", fmt.Sprint(saved.ID))
+	w = httptest.NewRecorder()
+	handleDeleteForward(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete forward status = %d: %s", w.Code, w.Body.String())
+	}
+	if len(calls) != 4 || calls[3].Method != http.MethodDelete || calls[3].Query != "name=forward.dynamic.2" {
+		t.Fatalf("unexpected delete calls: %+v", calls)
 	}
 }
 

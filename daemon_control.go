@@ -55,7 +55,7 @@ func startManagedDaemon() error {
 }
 
 func buildDaemonCommand() *exec.Cmd {
-	apiListen := *uwgsocksURL
+	apiListen := daemonAPIListenAddress(*uwgsocksURL)
 	if strings.HasPrefix(apiListen, "unix://") {
 		socketPath := strings.TrimPrefix(apiListen, "unix://")
 		if !filepath.IsAbs(socketPath) {
