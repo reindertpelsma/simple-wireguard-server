@@ -73,6 +73,9 @@ if [ -d "frontend" ]; then
     rm -rf frontend/dist 2> /dev/null || /bin/true
     cd frontend && npm install && npm run build
     cd ../
+    rm -rf dist 2> /dev/null || /bin/true
+    mkdir -p dist
+    cp -r frontend/dist/* ./dist/
 else
     echo "Source frontend dir not found. Skipping frontend build (hope dist exists)."
 fi
