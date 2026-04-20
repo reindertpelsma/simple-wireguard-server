@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -155,6 +156,9 @@ func buildIntegrationUwgsocks(t *testing.T) string {
 		}
 	}
 	bin := filepath.Join(t.TempDir(), "uwgsocks")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
 	goBin := "go"
 	if p := filepath.Join(os.Getenv("HOME"), "sdk", "go", "bin", "go"); fileExists(p) {
 		goBin = p
