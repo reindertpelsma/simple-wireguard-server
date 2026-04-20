@@ -37,6 +37,31 @@ if not exist ".\uwgsocks.exe" (
     )
 )
 
+if exist "frontend\" (
+    if exist "frontend\dist" rmdir /S /Q "frontend\dist"
+
+    pushd "frontend"
+    call npm install
+    if errorlevel 1 (
+        popd
+        exit /b 1
+    )
+
+    call npm run build
+    if errorlevel 1 (
+        popd
+        exit /b 1
+    )
+    popd
+
+    if exist "dist" rmdir /S /Q "dist"
+    mkdir "dist"
+
+    xcopy "frontend\dist\*" "dist\" /E /I /Y >nul
+) else (
+    echo Source frontend dir not found. Skipping frontend build ^(hope dist exists^).
+)
+
 
 go build -trimpath -ldflags="-s -w" -o uwgsocks-ui.exe
 if errorlevel 1 exit /b %errorlevel%
