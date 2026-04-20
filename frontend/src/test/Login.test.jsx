@@ -19,7 +19,7 @@ describe('Login Component', () => {
 
   it('renders login form', () => {
     render(<Login onLogin={() => {}} />);
-    expect(screen.getByText(/Rootless WireGuard management/i)).toBeInTheDocument();
+    expect(screen.getByText(/Sign in Wireguard/i)).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/admin/i)).toBeInTheDocument();
   });
 

@@ -168,7 +168,7 @@ export default function TransportsTab() {
   return (
     <div className="space-y-6">
       <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200">
-        Transport changes take effect immediately — added or removed transports are applied live to the running daemon without a restart.
+        Transport add/remove/update is applied live without a daemon restart. However, <strong>listener port changes</strong> (enabling or changing a listen port) only take effect after restarting the daemon from the Settings tab.
       </div>
       {/* Header */}
       <div className="flex items-center justify-between">

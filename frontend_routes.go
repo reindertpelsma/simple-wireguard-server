@@ -155,6 +155,7 @@ func serveDistAsset(w http.ResponseWriter, r *http.Request, name string, spaFall
 }
 
 const loginPageHTML = `<!doctype html>
+<!-- Only the lock is public -->
 <html lang="en">
 <head>
   <meta charset="utf-8">
