@@ -108,6 +108,7 @@ func restartManagedDaemon() error {
 	if err := startManagedDaemon(); err != nil {
 		return fmt.Errorf("start daemon: %w", err)
 	}
+	invalidateACLPushCache()
 	time.Sleep(1 * time.Second)
 	syncPeersToDaemon()
 	pushACLsToDaemon()

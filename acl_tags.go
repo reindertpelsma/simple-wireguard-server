@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"net/netip"
@@ -13,6 +14,7 @@ type PolicyTag struct {
 	ID         uint   `gorm:"primaryKey" json:"id"`
 	Name       string `gorm:"uniqueIndex;not null" json:"name"`
 	ExtraCIDRs string `json:"extra_cidrs,omitempty"`
+	ParentTags string `json:"parent_tags,omitempty"`
 }
 
 type accessIdentity struct {
@@ -45,11 +47,11 @@ func joinCSVList(parts []string) string {
 }
 
 func userTags(user User) []string {
-	return splitCSVList(user.Tags)
+	return expandTagNames(splitCSVList(user.Tags))
 }
 
 func peerTags(peer Peer) []string {
-	return splitCSVList(peer.Tags)
+	return expandTagNames(splitCSVList(peer.Tags))
 }
 
 func identityForUser(user User) accessIdentity {
@@ -67,12 +69,120 @@ func identityFromSessionToken(token string) (accessIdentity, bool) {
 	return identityForUser(user), true
 }
 
-func tagExtraCIDRs(tagName string) []string {
-	var tag PolicyTag
-	if err := gdb.First(&tag, "lower(name) = ?", strings.ToLower(strings.TrimSpace(tagName))).Error; err != nil {
+func rawTagName(tag PolicyTag) string {
+	return strings.ToLower(strings.TrimSpace(tag.Name))
+}
+
+func loadPolicyTagMap() map[string]PolicyTag {
+	var tags []PolicyTag
+	gdb.Find(&tags)
+	out := make(map[string]PolicyTag, len(tags))
+	for _, tag := range tags {
+		name := rawTagName(tag)
+		if name != "" {
+			out[name] = tag
+		}
+	}
+	return out
+}
+
+func expandTagNames(tags []string) []string {
+	tagMap := loadPolicyTagMap()
+	seen := map[string]bool{}
+	var out []string
+	var visit func(string)
+	visit = func(name string) {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		out = append(out, name)
+		tag, ok := tagMap[name]
+		if !ok {
+			return
+		}
+		for _, parent := range splitCSVList(tag.ParentTags) {
+			visit(parent)
+		}
+	}
+	for _, tag := range tags {
+		visit(tag)
+	}
+	return out
+}
+
+func validatePolicyTagGraph(candidate *PolicyTag) error {
+	tagMap := loadPolicyTagMap()
+	if candidate != nil {
+		name := rawTagName(*candidate)
+		if name == "" {
+			return fmt.Errorf("tag name is required")
+		}
+		for _, tag := range tagMap {
+			if tag.ID != candidate.ID && rawTagName(tag) == name {
+				return fmt.Errorf("tag already exists")
+			}
+		}
+		for oldName, tag := range tagMap {
+			if tag.ID == candidate.ID && oldName != name {
+				delete(tagMap, oldName)
+			}
+		}
+		tagMap[name] = *candidate
+	}
+
+	for name, tag := range tagMap {
+		for _, parent := range splitCSVList(tag.ParentTags) {
+			parent = strings.ToLower(strings.TrimSpace(parent))
+			if parent == "" {
+				continue
+			}
+			if parent == name {
+				return fmt.Errorf("tag %q cannot inherit itself", name)
+			}
+			if _, ok := tagMap[parent]; !ok {
+				return fmt.Errorf("parent tag %q does not exist", parent)
+			}
+		}
+	}
+
+	state := map[string]int{}
+	var visit func(string) error
+	visit = func(name string) error {
+		switch state[name] {
+		case 1:
+			return fmt.Errorf("tag inheritance cycle includes %q", name)
+		case 2:
+			return nil
+		}
+		state[name] = 1
+		for _, parent := range splitCSVList(tagMap[name].ParentTags) {
+			parent = strings.ToLower(strings.TrimSpace(parent))
+			if parent == "" {
+				continue
+			}
+			if err := visit(parent); err != nil {
+				return err
+			}
+		}
+		state[name] = 2
 		return nil
 	}
-	return splitCSVList(tag.ExtraCIDRs)
+	for name := range tagMap {
+		if err := visit(name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func policyTagMatchesSelector(tag PolicyTag, selector string) bool {
+	selector = strings.ToLower(strings.TrimSpace(selector))
+	if selector == "" {
+		return false
+	}
+	return containsToken(expandTagNames([]string{tag.Name}), selector)
 }
 
 func sourceCIDRsForUsers(usernames []string) []string {
@@ -93,12 +203,21 @@ func sourceCIDRsForUsers(usernames []string) []string {
 
 func sourceCIDRsForTags(tags []string) []string {
 	var out []string
-	for _, tag := range tags {
-		out = append(out, tagExtraCIDRs(tag)...)
+	tagMap := loadPolicyTagMap()
+	for _, selector := range tags {
+		selector = strings.ToLower(strings.TrimSpace(selector))
+		if selector == "" {
+			continue
+		}
+		for _, tag := range tagMap {
+			if policyTagMatchesSelector(tag, selector) {
+				out = append(out, splitCSVList(tag.ExtraCIDRs)...)
+			}
+		}
 		var users []User
 		gdb.Find(&users)
 		for _, user := range users {
-			if containsToken(userTags(user), tag) {
+			if containsToken(userTags(user), selector) {
 				var peers []Peer
 				gdb.Where("user_id = ?", user.ID).Find(&peers)
 				for _, peer := range peers {
@@ -109,7 +228,7 @@ func sourceCIDRsForTags(tags []string) []string {
 		var peers []Peer
 		gdb.Find(&peers)
 		for _, peer := range peers {
-			if containsToken(peerTags(peer), tag) {
+			if containsToken(peerTags(peer), selector) {
 				out = append(out, splitCSVList(peer.AssignedIPs)...)
 			}
 		}

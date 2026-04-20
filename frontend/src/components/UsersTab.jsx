@@ -6,7 +6,7 @@ export default function UsersTab() {
   const [users, setUsers] = useState([]);
   const [tags, setTags] = useState([]);
   const [newUser, setNewUser] = useState({ username: '', password: '', is_admin: false, tags: '' });
-  const [newTag, setNewTag] = useState({ name: '', extra_cidrs: '' });
+  const [newTag, setNewTag] = useState({ name: '', parent_tags: '', extra_cidrs: '' });
 
   async function fetchUsers() {
     try {
@@ -64,7 +64,7 @@ export default function UsersTab() {
     event.preventDefault();
     try {
       await api.createTag(newTag);
-      setNewTag({ name: '', extra_cidrs: '' });
+      setNewTag({ name: '', parent_tags: '', extra_cidrs: '' });
       fetchUsers();
     } catch (err) {
       alert(err.message);
@@ -147,10 +147,14 @@ export default function UsersTab() {
             <h3 className="text-2xl font-black tracking-tight">Groups and extra CIDRs</h3>
           </div>
         </div>
-        <form onSubmit={handleCreateTag} className="grid gap-4 md:grid-cols-[1fr_2fr_auto] md:items-end">
+        <form onSubmit={handleCreateTag} className="grid gap-4 md:grid-cols-[1fr_1fr_2fr_auto] md:items-end">
           <div className="space-y-2">
             <label className="field-label">Tag</label>
             <input className="input-field" required value={newTag.name} onChange={(event) => setNewTag({ ...newTag, name: event.target.value })} />
+          </div>
+          <div className="space-y-2">
+            <label className="field-label">Inherits</label>
+            <input className="input-field" placeholder="staff, trusted" value={newTag.parent_tags} onChange={(event) => setNewTag({ ...newTag, parent_tags: event.target.value })} />
           </div>
           <div className="space-y-2">
             <label className="field-label">Extra CIDRs</label>
@@ -160,8 +164,9 @@ export default function UsersTab() {
         </form>
         <div className="mt-5 grid gap-2">
           {tags.map((tag) => (
-            <div key={tag.id} className="grid gap-2 rounded-lg border border-[var(--border)] p-3 md:grid-cols-[1fr_2fr_auto]">
+            <div key={tag.id} className="grid gap-2 rounded-lg border border-[var(--border)] p-3 md:grid-cols-[1fr_1fr_2fr_auto]">
               <input className="input-field" value={tag.name} onChange={(event) => handleUpdateTag(tag, { name: event.target.value })} />
+              <input className="input-field" placeholder="Inherited tags" value={tag.parent_tags || ''} onChange={(event) => handleUpdateTag(tag, { parent_tags: event.target.value })} />
               <input className="input-field font-mono text-sm" value={tag.extra_cidrs || ''} onChange={(event) => handleUpdateTag(tag, { extra_cidrs: event.target.value })} />
               <button type="button" onClick={() => handleDeleteTag(tag.id)} className="ghost-button ghost-button-danger">Delete</button>
             </div>

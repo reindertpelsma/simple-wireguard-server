@@ -84,8 +84,16 @@ var (
 
 var gdb *gorm.DB
 var mu sync.Mutex
+var aclPushMu sync.Mutex
+var lastPushedACLHash string
 var hmacSecret = make([]byte, 32)
 var trafficHistory = newTrafficTracker(30 * time.Minute)
+
+func invalidateACLPushCache() {
+	aclPushMu.Lock()
+	lastPushedACLHash = ""
+	aclPushMu.Unlock()
+}
 
 // --- Discovery Helpers ---
 
@@ -1504,8 +1512,13 @@ func handleCreateTag(w http.ResponseWriter, r *http.Request) {
 	}
 	tag.Name = strings.TrimSpace(tag.Name)
 	tag.ExtraCIDRs = joinCSVList(splitCSVList(tag.ExtraCIDRs))
+	tag.ParentTags = joinCSVList(splitCSVList(tag.ParentTags))
 	if tag.Name == "" {
 		http.Error(w, "Tag name is required", http.StatusBadRequest)
+		return
+	}
+	if err := validatePolicyTagGraph(&tag); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if err := gdb.Create(&tag).Error; err != nil {
@@ -1533,6 +1546,11 @@ func handleUpdateTag(w http.ResponseWriter, r *http.Request) {
 		tag.Name = strings.TrimSpace(req.Name)
 	}
 	tag.ExtraCIDRs = joinCSVList(splitCSVList(req.ExtraCIDRs))
+	tag.ParentTags = joinCSVList(splitCSVList(req.ParentTags))
+	if err := validatePolicyTagGraph(&tag); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if err := gdb.Save(&tag).Error; err != nil {
 		http.Error(w, "Failed to update tag", http.StatusConflict)
 		return
@@ -1858,6 +1876,16 @@ func aclRuleMap(r ACLRule, source string) map[string]interface{} {
 func pushACLsToDaemon() {
 	acl := getACLConfig()
 	data, _ := json.Marshal(acl)
+	sum := sha256.Sum256(data)
+	hash := fmt.Sprintf("%x", sum[:])
+
+	aclPushMu.Lock()
+	if hash == lastPushedACLHash {
+		aclPushMu.Unlock()
+		return
+	}
+	aclPushMu.Unlock()
+
 	resp, err := uwgRequestWithContext(context.Background(), "PUT", "/v1/acls", bytes.NewReader(data))
 	if err != nil {
 		log.Printf("Failed to push ACLs to daemon: %v", err)
@@ -1866,7 +1894,11 @@ func pushACLsToDaemon() {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		log.Printf("Daemon returned error pushing ACLs: %d", resp.StatusCode)
+		return
 	}
+	aclPushMu.Lock()
+	lastPushedACLHash = hash
+	aclPushMu.Unlock()
 }
 
 // --- IP Allocation & Logic ---

@@ -23,6 +23,7 @@ import (
 func setupTestDB(t *testing.T) {
 	var err error
 	bootstrapState = bootstrapInfo{}
+	lastPushedACLHash = ""
 	gdb, err = gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
