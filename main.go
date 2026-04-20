@@ -47,7 +47,7 @@ import (
 	"gorm.io/gorm"
 )
 
-//go:embed dist/*
+//go:embed frontend/dist/*
 var frontendFS embed.FS
 
 // --- Configuration ---
