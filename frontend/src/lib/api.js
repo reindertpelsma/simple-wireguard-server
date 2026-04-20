@@ -152,6 +152,33 @@ export const api = {
       method: 'POST',
     }),
 
+  getProxyCredentials: () => request('/api/admin/proxy-credentials'),
+  createProxyCredential: (data) =>
+    request('/api/admin/proxy-credentials', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  deleteProxyCredential: (id) =>
+    request(`/api/admin/proxy-credentials/${id}`, {
+      method: 'DELETE',
+    }),
+
+  getExposedServices: () => request('/api/admin/exposed-services'),
+  createExposedService: (data) =>
+    request('/api/admin/exposed-services', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateExposedService: (id, data) =>
+    request(`/api/admin/exposed-services/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  deleteExposedService: (id) =>
+    request(`/api/admin/exposed-services/${id}`, {
+      method: 'DELETE',
+    }),
+
   setupTOTP: () =>
     request('/api/me/2fa/setup', {
       method: 'POST',

@@ -33,11 +33,7 @@ func oidcRedirectURI(r *http.Request) string {
 	if strings.TrimSpace(*oidcRedirectURL) != "" {
 		return *oidcRedirectURL
 	}
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	return scheme + "://" + r.Host + "/api/oidc/callback"
+	return canonicalBaseURL(r) + "/api/oidc/callback"
 }
 
 func fetchOIDCDiscovery(ctxReq *http.Request) (oidcDiscovery, error) {

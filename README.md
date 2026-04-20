@@ -47,6 +47,7 @@ Build a secure, rootless SD-WAN or VPN exit node in seconds.
 - **Zero-Trust Security:** Client private keys never touch the server (encrypted in-browser via AES-GCM).
 - **NAT Traversal:** Built-in TURN server support for connectivity through strict firewalls/CGNAT, by hosting a small TURN server see the userspace wireguard socks project.
 - **Secure by Default:** Argon2id hashing, encryption at rest for DB fields, and single-port HTTP/HTTPS multiplexing.
+- **Reverse Proxy Aware:** Trust configured proxy CIDRs for `X-Forwarded-For` / `X-Forwarded-Proto`, set an explicit canonical base URL, and expose optional browser access paths through `/proxy`, `/socket`, and protected service subdomains.
 
 ## Advanced Usage
 

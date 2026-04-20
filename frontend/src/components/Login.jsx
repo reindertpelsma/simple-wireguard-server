@@ -32,6 +32,11 @@ export default function Login({ theme = 'light', onToggleTheme = () => {}, onLog
       }
       const { token } = result;
       localStorage.setItem('token', token);
+      const next = new URLSearchParams(window.location.search).get('next');
+      if (next && next.startsWith('/')) {
+        window.location.href = next;
+        return;
+      }
       onLogin();
     } catch (err) {
       setError(err.message);

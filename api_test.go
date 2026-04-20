@@ -27,7 +27,7 @@ func setupTestDB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{})
+	gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{}, &AccessProxyCredential{}, &ExposedService{})
 	initGlobalSettings()
 }
 

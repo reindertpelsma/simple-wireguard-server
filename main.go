@@ -260,7 +260,7 @@ type PeerProtected = Peer
 type PeerPrivate = Peer
 
 // --- Main Initialization ---
-func startHTTPServer(mux *http.ServeMux) {
+func startHTTPServer(handler http.Handler) {
 	if *tlsCert == "" || *tlsKey == "" {
 		*tlsCert, *tlsKey = ensureSelfSignedCert()
 	}
@@ -268,7 +268,7 @@ func startHTTPServer(mux *http.ServeMux) {
 	cert, err := tls.LoadX509KeyPair(*tlsCert, *tlsKey)
 	if err != nil {
 		log.Printf("Failed to load TLS cert: %v. Running HTTP only.", err)
-		log.Fatal(http.ListenAndServe(*listenAddr, mux))
+		log.Fatal(http.ListenAndServe(*listenAddr, handler))
 		return
 	}
 
@@ -284,7 +284,7 @@ func startHTTPServer(mux *http.ServeMux) {
 	httpsLn := newInternalListener(l.Addr())
 
 	server := &http.Server{
-		Handler:           mux,
+		Handler:           handler,
 		ReadHeaderTimeout: 30 * time.Second,
 	}
 
@@ -408,9 +408,44 @@ func ensureSelfSignedCert() (string, string) {
 	return certFile, keyFile
 }
 
+func findFreePort() int {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 47322
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	return port
+}
+
+func unixSocketSupported() bool {
+	tmp := resolvePath("_probe.sock")
+	l, err := net.Listen("unix", tmp)
+	if err != nil {
+		return false
+	}
+	l.Close()
+	os.Remove(tmp)
+	return true
+}
+
 func main() {
 	flag.Parse()
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
+	// If unix sockets aren't supported (e.g. older Windows), fall back to loopback TCP.
+	// Windows 10 build 17063+ does support AF_UNIX, so we probe rather than hard-coding the OS.
+	if *uwgsocksURL == "unix://uwgsocks.sock" && !unixSocketSupported() {
+		port := findFreePort()
+		*uwgsocksURL = fmt.Sprintf("http://127.0.0.1:%d", port)
+		if *uwgsocksToken == "" {
+			tokenBytes := make([]byte, 32)
+			rand.Read(tokenBytes)
+			*uwgsocksToken = hex.EncodeToString(tokenBytes)
+		}
+		log.Printf("Unix sockets unavailable; daemon API on %s (token set)", *uwgsocksURL)
+	}
+
 	if *extractDist != "" {
 		if err := extractEmbeddedDist(*extractDist); err != nil {
 			log.Fatalf("extract frontend dist: %v", err)
@@ -510,6 +545,7 @@ func main() {
 	mux.HandleFunc("GET /api/oidc/login", handleOIDCLogin)
 	mux.HandleFunc("GET /api/oidc/callback", handleOIDCCallback)
 	mux.HandleFunc("GET /api/share/{token}", handleGetSharedConfig)
+	registerAccessProxyRoutes(mux)
 
 	// Peer Management
 	mux.HandleFunc("GET /api/peers", authMiddleware(handleGetPeers))
@@ -555,7 +591,7 @@ func main() {
 
 	registerFrontendRoutes(mux)
 
-	startHTTPServer(mux)
+	startHTTPServer(wrapRootHandler(mux))
 }
 
 // --- Database Init & Auth ---
@@ -581,7 +617,7 @@ func initDB() {
 	}
 
 	// Auto Migration
-	err = gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{})
+	err = gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{}, &AccessProxyCredential{}, &ExposedService{})
 
 	if err != nil {
 		log.Fatalf("Failed to migrate database: %v", err)
@@ -675,6 +711,9 @@ func initGlobalSettings() {
 		"yaml_block_rfc":           "true",
 		"yaml_host_forward":        "false",
 		"yaml_socks5_port":         "1080",
+		"yaml_http_port":           "8118",
+		"yaml_proxy_username":      "",
+		"yaml_proxy_password":      "",
 		"yaml_inbound_transparent": "true",
 		"yaml_socks5_udp":          "true",
 		"custom_yaml_enabled":      "false",
@@ -689,6 +728,14 @@ func initGlobalSettings() {
 		"client_config_url":           "",
 		// Routes pushed to clients (AllowedIPs for the server peer entry)
 		"client_allowed_ips": "0.0.0.0/0, ::/0",
+		// Reverse-proxy and browser access settings
+		"trusted_proxy_cidrs":         "",
+		"web_base_url":                "",
+		"http_proxy_access_enabled":   "false",
+		"socket_proxy_enabled":        "false",
+		"socket_proxy_http_port":      strconv.Itoa(findFreePort()),
+		"exposed_services_enabled":    "true",
+		"service_auth_cookie_seconds": strconv.Itoa(int((12 * time.Hour).Seconds())),
 	}
 
 	if ep := os.Getenv("WG_PUBLIC_ENDPOINT"); ep != "" {
@@ -718,14 +765,14 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := bearerTokenFromRequest(r)
 		if token == "" {
-			log.Printf("Auth failed: Missing token for %s %s", r.Method, r.URL.Path)
+			log.Printf("Auth failed: Missing token for %s %s from %s", r.Method, r.URL.Path, clientIPForRequest(r))
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 
 		var user User
 		if err := gdb.First(&user, "token = ?", token).Error; err != nil {
-			log.Printf("Auth failed: Invalid token %q for %s %s: %v", token, r.Method, r.URL.Path, err)
+			log.Printf("Auth failed: Invalid token %q for %s %s from %s: %v", token, r.Method, r.URL.Path, clientIPForRequest(r), err)
 			http.Error(w, "Invalid Token", http.StatusUnauthorized)
 			return
 		}
@@ -836,13 +883,13 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	var user User
 	if err := gdb.First(&user, "username = ?", req.Username).Error; err != nil {
-		log.Printf("Login failed: user %q not found", req.Username)
+		log.Printf("Login failed: user %q not found from %s", req.Username, clientIPForRequest(r))
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
 	if !verifyPassword(req.Password, user.PasswordHash) {
-		log.Printf("Login failed for user %q: wrong password", req.Username)
+		log.Printf("Login failed for user %q from %s: wrong password", req.Username, clientIPForRequest(r))
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
@@ -855,7 +902,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !verifyTOTPCode(decryptAtRest(user.TOTPSecret), req.TOTPCode, time.Now()) {
-			log.Printf("Login failed for user %q: invalid 2FA code", req.Username)
+			log.Printf("Login failed for user %q from %s: invalid 2FA code", req.Username, clientIPForRequest(r))
 			http.Error(w, "Invalid two-factor code", http.StatusUnauthorized)
 			return
 		}
@@ -863,7 +910,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	token := issueUserToken(w, &user)
 
-	log.Printf("User %q logged in successfully", req.Username)
+	log.Printf("User %q logged in successfully from %s", req.Username, clientIPForRequest(r))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"token": token})
 }
@@ -1152,10 +1199,10 @@ func handleDeletePeer(w http.ResponseWriter, r *http.Request) {
 }
 
 type DistributePeerInfo struct {
-	PublicKey   string `json:"public_key"`
-	AllowedIPs  string `json:"allowed_ips"`
-	Endpoint    string `json:"endpoint"`
-	Name        string `json:"name"`
+	PublicKey  string `json:"public_key"`
+	AllowedIPs string `json:"allowed_ips"`
+	Endpoint   string `json:"endpoint"`
+	Name       string `json:"name"`
 }
 
 func getDistributePeers() []DistributePeerInfo {
@@ -1989,6 +2036,21 @@ func deepMerge(dst, src map[string]interface{}) {
 	}
 }
 
+func buildProxyConfig() map[string]interface{} {
+	m := map[string]interface{}{
+		"socks5":        "127.0.0.1:" + getConfig("yaml_socks5_port"),
+		"udp_associate": getConfig("yaml_socks5_udp") == "true",
+	}
+	if p := strings.TrimSpace(getConfig("yaml_http_port")); p != "" && p != "0" {
+		m["http"] = "127.0.0.1:" + p
+	}
+	if u := strings.TrimSpace(getConfig("yaml_proxy_username")); u != "" {
+		m["username"] = u
+		m["password"] = getConfig("yaml_proxy_password")
+	}
+	return m
+}
+
 func generateCanonicalYAML() {
 	os.WriteFile(resolvePath("uwg_canonical.yaml"), buildCanonicalYAMLBytes(true), 0644)
 }
@@ -2019,10 +2081,7 @@ func buildCanonicalYAMLBytes(applyCustom bool) []byte {
 		"api": map[string]interface{}{
 			"listen": apiListen,
 			"token":  *uwgsocksToken,
-		}, "proxy": map[string]interface{}{
-			"socks5":        "0.0.0.0:" + getConfig("yaml_socks5_port"),
-			"udp_associate": getConfig("yaml_socks5_udp") == "true",
-		},
+		}, "proxy": buildProxyConfig(),
 		"inbound": map[string]interface{}{
 			"transparent": getConfig("yaml_inbound_transparent") == "true",
 		},
@@ -2056,7 +2115,22 @@ func buildCanonicalYAMLBytes(applyCustom bool) []byte {
 		managedWG["default_transport"] = def
 	}
 
-	if ts := getTransportsConfig(); len(ts) > 0 {
+	ts := getTransportsConfig()
+	if getConfig("socket_proxy_enabled") == "true" {
+		if p, err := strconv.Atoi(getConfig("socket_proxy_http_port")); err == nil && p > 0 {
+			ts = append(ts, map[string]interface{}{
+				"name":             "ui-socket-http",
+				"base":             "http",
+				"listen":           true,
+				"listen_port":      p,
+				"listen_addresses": []string{"127.0.0.1", "::1"},
+				"websocket": map[string]interface{}{
+					"path": "/socket",
+				},
+			})
+		}
+	}
+	if len(ts) > 0 {
 		managed["transports"] = ts
 	}
 

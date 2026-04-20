@@ -12,6 +12,8 @@ A WireGuard server manager UI (`uwgsocks-ui` binary) that manages an `uwgsocks` 
 - `bootstrap.go` — first-start admin user and bootstrap peer generation
 - `traffic.go` — in-memory traffic history tracker
 - `share.go` — shareable config link handling
+- `request_origin.go` — trusted reverse proxy CIDRs, canonical URL, client IP helpers
+- `access_proxy.go` — `/proxy`, `/socket`, and exposed-service reverse proxy handling
 - `oidc.go` — OIDC login integration
 - `auth_extra.go` — TOTP/2FA helpers
 - `frontend/` — Vite/React frontend (components in `src/components/`)
@@ -20,6 +22,7 @@ A WireGuard server manager UI (`uwgsocks-ui` binary) that manages an `uwgsocks` 
 
 ## Database (GORM/SQLite default)
 Models: `User`, `Peer`, `GlobalConfig`, `ACLRule`, `TransportConfig`, `SharedConfigLink`.
+Reverse proxy/access models: `AccessProxyCredential`, `ExposedService`.
 
 `GlobalConfig` is a key-value table. Settings are read with `getConfig(key)` and written with `gdb.Model(&GlobalConfig{}).Where("key = ?", k).Update("value", v)`.
 
@@ -31,13 +34,18 @@ Key settings stored in GlobalConfig:
 - `global_mtu` — MTU advertised in client configs
 - `default_transport` — transport name for the Endpoint/Transport line in client configs
 - `e2e_encryption_enabled`, `allow_custom_private_key`, `public_keys_visible`, `endpoints_visible`
-- `yaml_l3_forwarding`, `yaml_block_rfc`, `yaml_host_forward`, `yaml_socks5_port`, `yaml_inbound_transparent`, `yaml_socks5_udp`
+- `yaml_l3_forwarding`, `yaml_block_rfc`, `yaml_host_forward`, `yaml_socks5_port`, `yaml_http_port`, `yaml_proxy_username`, `yaml_proxy_password`, `yaml_inbound_transparent`, `yaml_socks5_udp`
 - `custom_yaml_enabled`, `custom_yaml` — optional full YAML override
 - `acl_inbound_default`, `acl_outbound_default`, `acl_relay_default`
 - `client_config_tcp` — #!TCP directive value for downloaded configs ("" / "supported" / "required")
 - `client_config_turn_url` — #!TURN= URL for downloaded configs
 - `client_config_skipverifytls` — #!SkipVerifyTLS directive ("" or "yes")
 - `client_config_url` — #!URL= value for downloaded configs
+- `trusted_proxy_cidrs` — comma/newline separated proxy source CIDRs allowed to supply `X-Forwarded-For` and `X-Forwarded-Proto`
+- `web_base_url` — canonical UI base URL including `http://` or `https://`; request-derived when empty
+- `http_proxy_access_enabled` — enables authenticated CONNECT proxy access on `/proxy`
+- `socket_proxy_enabled`, `socket_proxy_http_port` — enables `/socket` forwarding to a loopback HTTP WireGuard transport listener
+- `exposed_services_enabled`, `service_auth_cookie_seconds` — controls Host-based protected service reverse proxying
 
 ## Public vs admin config
 `publicConfigMap()` returns keys exposed to all authenticated users (used by frontend to build WireGuard configs). `adminConfigMap()` returns all keys (admin-only).
