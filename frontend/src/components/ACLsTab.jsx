@@ -96,6 +96,9 @@ export default function ACLsTab() {
 
   return (
     <div className="space-y-6">
+      <div className="rounded-3xl border border-[var(--border)] bg-[var(--surface-soft)] px-4 py-3 text-sm text-[var(--muted)]">
+        ACL changes take effect immediately — rules are pushed live to the running daemon without a restart.
+      </div>
       <section className="panel p-6">
         <div className="mb-6 flex items-center gap-3">
           <div className="brand-badge">

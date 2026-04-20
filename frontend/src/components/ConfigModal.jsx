@@ -23,7 +23,10 @@ export default function ConfigModal({ peer, onClose }) {
           throw new Error('This device has no stored private key material. Use the original bootstrap printout or a manual device-generated key instead.');
         }
 
-        const globalConfig = await api.getPublicConfig();
+        const [globalConfig, distributePeers] = await Promise.all([
+          api.getPublicConfig(),
+          api.getDistributePeers().catch(() => []),
+        ]);
         let privateKey = '';
         let presharedKey = '';
         let assignedIPs = peer.assigned_ips;
@@ -51,6 +54,7 @@ export default function ConfigModal({ peer, onClose }) {
           assignedIPs = privateData.assigned_ips;
         }
 
+        const myDistributePeers = distributePeers.filter((dp) => dp.public_key !== peer.public_key);
         const configText = buildWireGuardConfig({
           privateKey,
           assignedIPs,
@@ -61,6 +65,13 @@ export default function ConfigModal({ peer, onClose }) {
           transport: globalConfig.default_transport,
           presharedKey,
           keepalive: peer.keepalive,
+          enableIPv6: globalConfig.enable_client_ipv6,
+          allowedIPs: globalConfig.client_allowed_ips,
+          directiveTCP: globalConfig.client_config_tcp,
+          directiveTURN: globalConfig.client_config_turn_url,
+          directiveSkipVerifyTLS: globalConfig.client_config_skipverifytls,
+          directiveURL: globalConfig.client_config_url,
+          distributePeers: myDistributePeers,
         });
 
         if (!cancelled) {

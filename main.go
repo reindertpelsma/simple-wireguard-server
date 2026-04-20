@@ -181,6 +181,9 @@ type Peer struct {
 	TrafficUploadBps    int64      `gorm:"default:0" json:"traffic_upload_bps"`
 	TrafficDownloadBps  int64      `gorm:"default:0" json:"traffic_download_bps"`
 	TrafficLatencyMs    int        `gorm:"default:0" json:"traffic_latency_ms"`
+	// Distribute peer: when true, this peer is included in all other clients' configs
+	IsDistribute       bool   `gorm:"default:false" json:"is_distribute"`
+	DistributeEndpoint string `json:"distribute_endpoint,omitempty"` // endpoint advertised to other clients; auto-updated from last-seen IP
 	// Stats from uwgsocks (volatile)
 	LastHandshakeTime     string             `gorm:"-" json:"last_handshake_time,omitempty"`
 	TransmitBytes         uint64             `gorm:"-" json:"transmit_bytes"`
@@ -516,6 +519,7 @@ func main() {
 	mux.HandleFunc("GET /api/peers/{id}/private", authMiddleware(handleGetPeerPrivate))
 	mux.HandleFunc("POST /api/peers/{id}/ping", authMiddleware(handlePingPeer))
 	mux.HandleFunc("POST /api/peers/{id}/share-links", authMiddleware(handleCreateShareLink))
+	mux.HandleFunc("GET /api/distribute-peers", authMiddleware(handleGetDistributePeers))
 
 	// Admin - Users
 	mux.HandleFunc("GET /api/admin/users", authMiddleware(adminMiddleware(handleGetUsers)))
@@ -578,6 +582,7 @@ func initDB() {
 
 	// Auto Migration
 	err = gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{})
+
 	if err != nil {
 		log.Fatalf("Failed to migrate database: %v", err)
 	}
@@ -637,6 +642,19 @@ func initGlobalSettings() {
 		}
 	}
 
+	ipv6Default := "false"
+	var countUsers int64
+	gdb.Model(&User{}).Count(&countUsers)
+	if countUsers == 0 {
+		// First start: detect IPv6 internet connectivity
+		if detectIPv6Internet() {
+			ipv6Default = "true"
+			log.Println("IPv6 internet detected; enabling IPv6 client addresses by default.")
+		} else {
+			log.Println("No IPv6 internet detected; disabling IPv6 client addresses by default.")
+		}
+	}
+
 	defaults := map[string]string{
 		"server_privkey":           secrets.ServerPrivateKey,
 		"server_pubkey":            secrets.ServerPublicKey,
@@ -645,6 +663,7 @@ func initGlobalSettings() {
 		"client_dns":               "100.64.0.1",
 		"client_subnet_ipv4":       "100.64.0.0/24",
 		"client_subnet_ipv6":       "fd00:64::/64",
+		"enable_client_ipv6":       ipv6Default,
 		"public_keys_visible":      "false",
 		"endpoints_visible":        "false",
 		"p2p_routing_enabled":      "true",
@@ -663,6 +682,13 @@ func initGlobalSettings() {
 		"acl_inbound_default":      "allow",
 		"acl_outbound_default":     "allow",
 		"acl_relay_default":        "deny",
+		// #! directives included in downloaded client configs
+		"client_config_tcp":           "",
+		"client_config_turn_url":      "",
+		"client_config_skipverifytls": "",
+		"client_config_url":           "",
+		// Routes pushed to clients (AllowedIPs for the server peer entry)
+		"client_allowed_ips": "0.0.0.0/0, ::/0",
 	}
 
 	if ep := os.Getenv("WG_PUBLIC_ENDPOINT"); ep != "" {
@@ -1027,6 +1053,24 @@ func fetchDaemonPeerStats() map[string]Peer {
 		statsMap[p.PublicKey] = peer
 	}
 	trafficHistory.Record(trafficPeers, time.Now())
+
+	// Auto-persist last-seen endpoint for distribute peers
+	go func() {
+		for pubKey, stat := range statsMap {
+			if stat.EndpointIP == "" {
+				continue
+			}
+			var dbPeer Peer
+			if err := gdb.First(&dbPeer, "public_key = ? AND is_distribute = ?", pubKey, true).Error; err != nil {
+				continue
+			}
+			// Only auto-update if DistributeEndpoint is empty (not manually overridden)
+			if dbPeer.DistributeEndpoint == "" {
+				gdb.Model(&dbPeer).Update("distribute_endpoint", stat.EndpointIP)
+			}
+		}
+	}()
+
 	return statsMap
 }
 
@@ -1107,6 +1151,41 @@ func handleDeletePeer(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+type DistributePeerInfo struct {
+	PublicKey   string `json:"public_key"`
+	AllowedIPs  string `json:"allowed_ips"`
+	Endpoint    string `json:"endpoint"`
+	Name        string `json:"name"`
+}
+
+func getDistributePeers() []DistributePeerInfo {
+	var peers []Peer
+	gdb.Where("is_distribute = ? AND enabled = ?", true, true).Find(&peers)
+	var result []DistributePeerInfo
+	for _, p := range peers {
+		ep := p.DistributeEndpoint
+		if ep == "" {
+			ep = p.EndpointIP
+		}
+		result = append(result, DistributePeerInfo{
+			PublicKey:  p.PublicKey,
+			AllowedIPs: p.AssignedIPs,
+			Endpoint:   ep,
+			Name:       p.Name,
+		})
+	}
+	return result
+}
+
+func handleGetDistributePeers(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	peers := getDistributePeers()
+	if peers == nil {
+		peers = []DistributePeerInfo{}
+	}
+	json.NewEncoder(w).Encode(peers)
+}
+
 func handleGetPublicConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(publicConfigMap())
@@ -1134,13 +1213,15 @@ func handleUpdatePeer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name           *string    `json:"name"`
-		AssignedIPs    *string    `json:"assigned_ips"`
-		Keepalive      *int       `json:"keepalive"`
-		Enabled        *bool      `json:"enabled"`
-		StaticEndpoint *string    `json:"static_endpoint"`
-		ExpiresAt      *time.Time `json:"expires_at"`
-		TrafficShaper  *struct {
+		Name               *string    `json:"name"`
+		AssignedIPs        *string    `json:"assigned_ips"`
+		Keepalive          *int       `json:"keepalive"`
+		Enabled            *bool      `json:"enabled"`
+		StaticEndpoint     *string    `json:"static_endpoint"`
+		ExpiresAt          *time.Time `json:"expires_at"`
+		IsDistribute       *bool      `json:"is_distribute"`
+		DistributeEndpoint *string    `json:"distribute_endpoint"`
+		TrafficShaper      *struct {
 			UploadBps     int64 `json:"upload_bps"`
 			DownloadBps   int64 `json:"download_bps"`
 			LatencyMillis int   `json:"latency_ms"`
@@ -1165,6 +1246,12 @@ func handleUpdatePeer(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ExpiresAt != nil {
 		peer.ExpiresAt = req.ExpiresAt
+	}
+	if req.IsDistribute != nil && isAdmin {
+		peer.IsDistribute = *req.IsDistribute
+	}
+	if req.DistributeEndpoint != nil && isAdmin {
+		peer.DistributeEndpoint = *req.DistributeEndpoint
 	}
 	if req.TrafficShaper != nil && isAdmin {
 		peer.TrafficUploadBps = req.TrafficShaper.UploadBps
@@ -1356,6 +1443,7 @@ func handleCreateTransport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	generateCanonicalYAML()
+	go applyTransportChangeLive("", t)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(t)
@@ -1368,6 +1456,7 @@ func handleUpdateTransport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Transport not found", http.StatusNotFound)
 		return
 	}
+	oldName := t.Name
 	var req TransportConfig
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
@@ -1379,13 +1468,18 @@ func handleUpdateTransport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	generateCanonicalYAML()
+	go applyTransportChangeLive(oldName, req)
 	w.WriteHeader(http.StatusOK)
 }
 
 func handleDeleteTransport(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	gdb.Delete(&TransportConfig{}, id)
-	generateCanonicalYAML()
+	var t TransportConfig
+	if err := gdb.First(&t, id).Error; err == nil {
+		gdb.Delete(&TransportConfig{}, id)
+		generateCanonicalYAML()
+		go func() { removeTransportFromDaemon(t.Name) }()
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -1631,14 +1725,18 @@ func allocateIP() (string, error) {
 		}
 	}
 
-	// IPv6: Random Suffix
+	if v4 == "" {
+		return "", errors.New("ipv4 subnet exhausted")
+	}
+
+	// Always allocate IPv6 — visibility is controlled by enable_client_ipv6, not allocation
 	subnetV6 := getConfig("client_subnet_ipv6")
 	prefV6, err := netip.ParsePrefix(subnetV6)
 	if err != nil {
-		return "", fmt.Errorf("v6 subnet: %w", err)
+		return v4, nil
 	}
 	v6 := ""
-	for i := 0; i < 10; i++ { // Try a few times
+	for i := 0; i < 10; i++ {
 		suffix := make([]byte, 8)
 		rand.Read(suffix)
 		raw := prefV6.Addr().AsSlice()
@@ -1650,12 +1748,9 @@ func allocateIP() (string, error) {
 		}
 	}
 
-	if v4 == "" {
-		return "", errors.New("ipv4 subnet exhausted")
-	}
 	if v6 == "" {
 		return v4, nil
-	} // Fallback to v4 only if v6 fails
+	}
 	return v4 + ", " + v6, nil
 }
 
@@ -1703,6 +1798,157 @@ func removePeerFromDaemon(pubKey string) {
 	uwgRequest("DELETE", "/v1/peers?public_key="+pubKey, nil)
 }
 
+// transportConfigToAPIPayload converts a DB TransportConfig to the JSON payload
+// accepted by uwgsocks POST /v1/transports.
+func transportConfigToAPIPayload(t TransportConfig) map[string]interface{} {
+	base := t.Base
+	if strings.EqualFold(base, "udp") && strings.EqualFold(t.ProxyType, "turn") {
+		base = "turn"
+	}
+	m := map[string]interface{}{
+		"name":   t.Name,
+		"base":   base,
+		"listen": t.Listen,
+	}
+	if t.ListenPort > 0 {
+		p := t.ListenPort
+		m["listen_port"] = &p
+	}
+	if t.ListenAddrs != "" {
+		var addrs []string
+		for _, a := range strings.Split(t.ListenAddrs, ",") {
+			if a = strings.TrimSpace(a); a != "" {
+				addrs = append(addrs, a)
+			}
+		}
+		if len(addrs) > 0 {
+			m["listen_addresses"] = addrs
+		}
+	}
+	if t.URL != "" {
+		m["url"] = t.URL
+	}
+	if t.WSPath != "" || t.ConnectHost != "" || t.HostHeader != "" {
+		ws := map[string]interface{}{}
+		if t.WSPath != "" {
+			ws["path"] = t.WSPath
+		}
+		if t.HostHeader != "" {
+			ws["host_header"] = t.HostHeader
+		}
+		m["websocket"] = ws
+	}
+	if t.TLSCertFile != "" || t.TLSKeyFile != "" || t.TLSCAFile != "" || t.TLSVerifyPeer || t.TLSServerSNI != "" {
+		tls := map[string]interface{}{}
+		if t.TLSCertFile != "" {
+			tls["cert_file"] = t.TLSCertFile
+		}
+		if t.TLSKeyFile != "" {
+			tls["key_file"] = t.TLSKeyFile
+		}
+		if t.TLSCAFile != "" {
+			tls["ca_file"] = t.TLSCAFile
+		}
+		if t.TLSVerifyPeer {
+			tls["verify_peer"] = true
+		}
+		if t.TLSServerSNI != "" {
+			tls["server_sni"] = t.TLSServerSNI
+		}
+		if strings.EqualFold(base, "turn") {
+			turnCfg := m["turn"]
+			if tc, ok := turnCfg.(map[string]interface{}); ok {
+				tc["tls"] = tls
+			}
+		} else {
+			m["tls"] = tls
+		}
+	}
+	if strings.EqualFold(base, "turn") {
+		turnCfg := map[string]interface{}{}
+		srv := t.TurnServer
+		if srv == "" && t.ProxyServer != "" {
+			srv = t.ProxyServer
+		}
+		if srv != "" {
+			turnCfg["server"] = srv
+		}
+		if t.TurnUsername != "" {
+			turnCfg["username"] = t.TurnUsername
+			turnCfg["password"] = t.TurnPassword
+		} else if t.ProxyUsername != "" {
+			turnCfg["username"] = t.ProxyUsername
+			turnCfg["password"] = t.ProxyPassword
+		}
+		if t.TurnRealm != "" {
+			turnCfg["realm"] = t.TurnRealm
+		}
+		if t.TurnProtocol != "" {
+			turnCfg["protocol"] = t.TurnProtocol
+		}
+		if t.TurnNoCreatePermission {
+			turnCfg["no_create_permission"] = true
+		}
+		if t.TurnIncludeWGPublicKey {
+			turnCfg["include_wg_public_key"] = true
+		}
+		m["turn"] = turnCfg
+	} else if t.ProxyType != "" && t.ProxyType != "none" {
+		proxy := map[string]interface{}{"type": t.ProxyType}
+		switch t.ProxyType {
+		case "socks5":
+			s := map[string]interface{}{"server": t.ProxyServer}
+			if t.ProxyUsername != "" {
+				s["username"] = t.ProxyUsername
+				s["password"] = t.ProxyPassword
+			}
+			proxy["socks5"] = s
+		case "http":
+			h := map[string]interface{}{"server": t.ProxyServer}
+			if t.ProxyUsername != "" {
+				h["username"] = t.ProxyUsername
+				h["password"] = t.ProxyPassword
+			}
+			proxy["http"] = h
+		}
+		m["proxy"] = proxy
+	}
+	return m
+}
+
+func pushTransportToDaemon(t TransportConfig) error {
+	payload := transportConfigToAPIPayload(t)
+	b, _ := json.Marshal(payload)
+	resp, err := uwgRequest("POST", "/v1/transports", bytes.NewBuffer(b))
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("daemon returned %d for transport push", resp.StatusCode)
+	}
+	return nil
+}
+
+func removeTransportFromDaemon(name string) {
+	resp, err := uwgRequest("DELETE", "/v1/transports/"+name, nil)
+	if err == nil {
+		resp.Body.Close()
+	}
+}
+
+func applyTransportChangeLive(oldName string, t TransportConfig) {
+	if oldName != "" && oldName != t.Name {
+		removeTransportFromDaemon(oldName)
+	} else if oldName != "" {
+		removeTransportFromDaemon(oldName)
+	}
+	if err := pushTransportToDaemon(t); err != nil {
+		log.Printf("Live transport push failed (%s), falling back to restart: %v", t.Name, err)
+		go restartManagedDaemonIfEnabled()
+	}
+}
+
 func syncPeersToDaemon() {
 	log.Println("Syncing peers to uwgsocks daemon...")
 	var peers []Peer
@@ -1710,6 +1956,23 @@ func syncPeersToDaemon() {
 	for _, p := range peers {
 		pushPeerToDaemon(p)
 	}
+}
+
+// serverWireGuardAddresses returns the addresses for the server's WireGuard interface.
+// IPv6 is omitted when enable_client_ipv6 is false.
+func serverWireGuardAddresses() []string {
+	v4 := getConfig("client_dns") + "/24"
+	if getConfig("enable_client_ipv6") != "true" {
+		return []string{v4}
+	}
+	// Derive an IPv6 gateway from the client_subnet_ipv6 (use the ::1 address of that prefix)
+	subnetV6 := getConfig("client_subnet_ipv6")
+	prefV6, err := netip.ParsePrefix(subnetV6)
+	if err != nil {
+		return []string{v4}
+	}
+	gw := prefV6.Addr().Next()
+	return []string{v4, gw.String() + "/64"}
 }
 
 func deepMerge(dst, src map[string]interface{}) {
@@ -1765,7 +2028,7 @@ func buildCanonicalYAMLBytes(applyCustom bool) []byte {
 		},
 		"wireguard": map[string]interface{}{
 			"private_key": getConfig("server_privkey"),
-			"addresses":   []string{getConfig("client_dns") + "/24"},
+			"addresses":   serverWireGuardAddresses(),
 			"listen_port": &port,
 			"mtu":         mtu,
 		},

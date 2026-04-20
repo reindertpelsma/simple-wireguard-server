@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { FileText, KeyRound, Power, Save, ShieldCheck } from 'lucide-react';
+import { FileText, KeyRound, Network, Power, Save, ShieldCheck } from 'lucide-react';
 import { api } from '../lib/api';
 
 export default function SettingsTab() {
@@ -113,14 +113,15 @@ export default function SettingsTab() {
     }
   };
 
-  const editableConfigEntries = Object.entries(config).filter(([key]) => !['custom_yaml', 'custom_yaml_enabled'].includes(key));
+  const directiveKeys = ['enable_client_ipv6', 'client_allowed_ips', 'client_config_tcp', 'client_config_turn_url', 'client_config_skipverifytls', 'client_config_url'];
+  const editableConfigEntries = Object.entries(config).filter(([key]) => !['custom_yaml', 'custom_yaml_enabled', ...directiveKeys].includes(key));
 
   if (loading) {
     return <div className="state-shell py-24 text-[var(--muted)]">Loading settings…</div>;
   }
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+    <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
       <section className="panel p-6">
         <div className="mb-6 flex items-center gap-3">
           <div className="brand-badge">
@@ -201,6 +202,95 @@ export default function SettingsTab() {
         </div>
       </section>
 
+      <div className="grid gap-6">
+      <section className="panel p-6">
+        <div className="mb-6 flex items-center gap-3">
+          <div className="brand-badge">
+            <Network size={18} />
+          </div>
+          <div>
+            <span className="eyebrow">Client Config Directives</span>
+            <h3 className="text-2xl font-black tracking-tight">Downloaded config options</h3>
+          </div>
+        </div>
+        <p className="mb-4 text-sm text-[var(--muted)]">
+          These settings are embedded as <code className="font-mono">#!</code> directives in downloaded WireGuard configs and are parsed by uwgsocks clients.
+        </p>
+        <form onSubmit={handleUpdate} className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-2 md:col-span-2">
+            <label className="field-label">Push routes (AllowedIPs)</label>
+            <input
+              type="text"
+              className="input-field font-mono text-sm"
+              placeholder="0.0.0.0/0, ::/0"
+              value={config.client_allowed_ips || ''}
+              onChange={(e) => setConfig({ ...config, client_allowed_ips: e.target.value })}
+            />
+            <p className="text-xs text-[var(--muted)]">Controls what traffic clients route through the server. Default: <code className="font-mono">0.0.0.0/0, ::/0</code> (all traffic).</p>
+          </div>
+          <div className="space-y-2 md:col-span-2">
+            <label className="field-label">IPv6 client addresses</label>
+            <select
+              className="input-field"
+              value={config.enable_client_ipv6 || 'false'}
+              onChange={(e) => setConfig({ ...config, enable_client_ipv6: e.target.value })}
+            >
+              <option value="true">Enabled — allocate IPv6 addresses and include ::/0 in AllowedIPs</option>
+              <option value="false">Disabled — IPv4 only</option>
+            </select>
+          </div>
+          <div className="space-y-2">
+            <label className="field-label">#!TCP directive</label>
+            <select
+              className="input-field"
+              value={config.client_config_tcp || ''}
+              onChange={(e) => setConfig({ ...config, client_config_tcp: e.target.value })}
+            >
+              <option value="">Not set (use UDP / server default)</option>
+              <option value="supported">supported — prefer TCP, fall back to UDP</option>
+              <option value="required">required — TCP only</option>
+            </select>
+          </div>
+          <div className="space-y-2">
+            <label className="field-label">#!SkipVerifyTLS directive</label>
+            <select
+              className="input-field"
+              value={config.client_config_skipverifytls || ''}
+              onChange={(e) => setConfig({ ...config, client_config_skipverifytls: e.target.value })}
+            >
+              <option value="">Not set</option>
+              <option value="yes">yes — skip TLS certificate verification</option>
+            </select>
+          </div>
+          <div className="space-y-2">
+            <label className="field-label">#!TURN= URL</label>
+            <input
+              type="text"
+              className="input-field"
+              placeholder="turn+tls://user:pass@turn.example.com:443"
+              value={config.client_config_turn_url || ''}
+              onChange={(e) => setConfig({ ...config, client_config_turn_url: e.target.value })}
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="field-label">#!URL= (WebSocket/HTTP transport URL)</label>
+            <input
+              type="text"
+              className="input-field"
+              placeholder="https://vpn.example.com/wireguard"
+              value={config.client_config_url || ''}
+              onChange={(e) => setConfig({ ...config, client_config_url: e.target.value })}
+            />
+          </div>
+          <div className="md:col-span-2">
+            <button type="submit" className="primary-button">
+              <Save size={16} />
+              <span>Save</span>
+            </button>
+          </div>
+        </form>
+      </section>
+
       <section className="panel p-6">
         <div className="mb-6 flex items-center gap-3">
           <div className="brand-badge">
@@ -237,6 +327,7 @@ export default function SettingsTab() {
           </div>
         </div>
       </section>
+      </div>
     </div>
   );
 }

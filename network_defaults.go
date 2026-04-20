@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type daemonStatusSnapshot struct {
@@ -217,6 +218,19 @@ func interfaceForAddr(ip netip.Addr) *net.Interface {
 		}
 	}
 	return nil
+}
+
+func detectIPv6Internet() bool {
+	targets := []string{"[2606:4700:4700::1111]:53", "[2001:4860:4860::8888]:53", "[2620:fe::fe]:53"}
+	for _, t := range targets {
+		conn, err := net.DialTimeout("udp", t, 2*time.Second)
+		if err != nil {
+			continue
+		}
+		conn.Close()
+		return true
+	}
+	return false
 }
 
 func looksTunnelInterface(name string) bool {

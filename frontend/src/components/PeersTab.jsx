@@ -10,6 +10,7 @@ import {
   Power,
   PowerOff,
   QrCode,
+  Share2,
   Smartphone,
   Trash2,
   User,
@@ -163,6 +164,8 @@ function EditPeerModal({ peer, isAdmin, onClose, onSave }) {
     traffic_upload_bps: peer.traffic_upload_bps ? String(peer.traffic_upload_bps) : '',
     traffic_download_bps: peer.traffic_download_bps ? String(peer.traffic_download_bps) : '',
     traffic_latency_ms: peer.traffic_latency_ms ? String(peer.traffic_latency_ms) : '',
+    is_distribute: peer.is_distribute || false,
+    distribute_endpoint: peer.distribute_endpoint || '',
   });
 
   const submit = async (event) => {
@@ -179,6 +182,8 @@ function EditPeerModal({ peer, isAdmin, onClose, onSave }) {
           download_bps: parseNumberField(form.traffic_download_bps),
           latency_ms: parseNumberField(form.traffic_latency_ms),
         },
+        is_distribute: form.is_distribute,
+        distribute_endpoint: form.distribute_endpoint,
       } : {}),
     });
   };
@@ -248,6 +253,31 @@ function EditPeerModal({ peer, isAdmin, onClose, onSave }) {
             </div>
           )}
 
+          {isAdmin && (
+            <div className="space-y-3 rounded-3xl border border-[var(--border)] bg-[var(--surface-soft)] p-4">
+              <div>
+                <span className="eyebrow">Distribute Peer</span>
+                <p className="mt-2 text-sm text-[var(--muted)]">When enabled, this peer is included in all other clients' downloaded configs as an extra [Peer] block for direct connection.</p>
+              </div>
+              <label className="flex items-center gap-3 text-sm font-medium">
+                <input type="checkbox" checked={form.is_distribute} onChange={(event) => setForm({ ...form, is_distribute: event.target.checked })} />
+                <span>Mark as distribute peer</span>
+              </label>
+              {form.is_distribute && (
+                <div className="space-y-2">
+                  <label className="field-label">Distribute endpoint override</label>
+                  <input
+                    className="input-field font-mono text-sm"
+                    placeholder="Auto-detected from last handshake (leave blank)"
+                    value={form.distribute_endpoint}
+                    onChange={(event) => setForm({ ...form, distribute_endpoint: event.target.value })}
+                  />
+                  <p className="text-xs text-[var(--muted)]">Override the endpoint advertised in other clients' configs. Leave blank to use the last-seen IP.</p>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex flex-col-reverse gap-3 border-t border-[var(--border)] pt-4 sm:flex-row sm:justify-end">
             <button type="button" onClick={onClose} className="ghost-button justify-center">Cancel</button>
             <button type="submit" className="primary-button justify-center">Save changes</button>
@@ -258,7 +288,7 @@ function EditPeerModal({ peer, isAdmin, onClose, onSave }) {
   );
 }
 
-export default function PeersTab({ isAdmin, onSelectPeer }) {
+export default function PeersTab({ isAdmin, currentUsername, onSelectPeer }) {
   const [peers, setPeers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [pinging, setPinging] = useState(null);
@@ -323,12 +353,21 @@ export default function PeersTab({ isAdmin, onSelectPeer }) {
     }
   };
 
-  const groups = useMemo(() => peers.reduce((accumulator, peer) => {
-    const group = peer.username || 'Unknown';
-    if (!accumulator[group]) accumulator[group] = [];
-    accumulator[group].push(peer);
-    return accumulator;
-  }, {}), [peers]);
+  const groups = useMemo(() => {
+    const map = peers.reduce((accumulator, peer) => {
+      const group = peer.username || 'Unknown';
+      if (!accumulator[group]) accumulator[group] = [];
+      accumulator[group].push(peer);
+      return accumulator;
+    }, {});
+    const entries = Object.entries(map);
+    entries.sort(([a], [b]) => {
+      if (a === currentUsername) return -1;
+      if (b === currentUsername) return 1;
+      return a.localeCompare(b);
+    });
+    return entries;
+  }, [peers, currentUsername]);
 
   if (loading) {
     return (
@@ -341,7 +380,7 @@ export default function PeersTab({ isAdmin, onSelectPeer }) {
 
   return (
     <div className="space-y-10">
-      {Object.entries(groups).map(([username, userPeers]) => (
+      {groups.map(([username, userPeers]) => (
         <section key={username} className="space-y-4">
           <div className="flex items-center gap-3 px-1">
             <div className="brand-badge">
@@ -361,6 +400,8 @@ export default function PeersTab({ isAdmin, onSelectPeer }) {
               const hasShaper = (peer.traffic_upload_bps || 0) > 0 || (peer.traffic_download_bps || 0) > 0 || (peer.traffic_latency_ms || 0) > 0;
               const hasTransportDetails = !!(peer.transport_name || peer.transport_state || peer.transport_endpoint || peer.transport_source_addr || peer.transport_carrier_remote_addr);
 
+              const canManage = peer.is_owner || isAdmin;
+
               return (
                 <article key={peer.id} className={`peer-card ${peer.enabled ? '' : 'peer-card-disabled'}`}>
                   <div className="flex flex-col gap-6">
@@ -373,6 +414,7 @@ export default function PeersTab({ isAdmin, onSelectPeer }) {
                           <div className="flex flex-wrap items-center gap-2">
                             <h4 className="text-xl font-black tracking-tight">{peer.name}</h4>
                             {!peer.enabled && <span className="status-chip status-chip-danger">Disabled</span>}
+                            {peer.is_distribute && <span className="status-chip"><Share2 size={12} /> Distribute peer</span>}
                             {peer.is_manual_key && <span className="status-chip status-chip-muted"><Lock size={12} /> Manual key</span>}
                             {peer.keepalive > 0 && <span className="status-chip">Keepalive {peer.keepalive}s</span>}
                             {hasShaper && <span className="status-chip">Shaped</span>}
@@ -403,36 +445,46 @@ export default function PeersTab({ isAdmin, onSelectPeer }) {
                           {pinging === peer.id ? <Loader2 className="animate-spin" size={16} /> : <Activity size={16} />}
                           <span>Ping</span>
                         </button>
-                        <button type="button" onClick={() => setEditingPeer(peer)} className="ghost-button">
-                          <Edit3 size={16} />
-                          <span>Edit</span>
-                        </button>
-                        <button type="button" onClick={() => handleToggle(peer)} className="ghost-button">
-                          {peer.enabled ? <Power size={16} /> : <PowerOff size={16} />}
-                          <span>{peer.enabled ? 'Disable' : 'Enable'}</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => canShareConfig ? setSharingPeer(peer) : null}
-                          className={`ghost-button ${canShareConfig ? '' : 'ghost-button-disabled'}`}
-                          title={canShareConfig ? 'Share config' : 'This browser cannot unlock a shareable config for this peer'}
-                        >
-                          <Link2 size={16} />
-                          <span>Share</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => canRevealConfig ? onSelectPeer(peer) : null}
-                          className={`primary-button ${canRevealConfig ? '' : 'primary-button-disabled'}`}
-                          title={canRevealConfig ? 'Open config' : 'This browser cannot decrypt the stored config'}
-                        >
-                          <QrCode size={16} />
-                          <span>Config</span>
-                        </button>
-                        <button type="button" onClick={() => handleDelete(peer.id)} className="ghost-button ghost-button-danger">
-                          <Trash2 size={16} />
-                          <span>Delete</span>
-                        </button>
+                        {canManage && (
+                          <button type="button" onClick={() => setEditingPeer(peer)} className="ghost-button">
+                            <Edit3 size={16} />
+                            <span>Edit</span>
+                          </button>
+                        )}
+                        {canManage && (
+                          <button type="button" onClick={() => handleToggle(peer)} className="ghost-button">
+                            {peer.enabled ? <Power size={16} /> : <PowerOff size={16} />}
+                            <span>{peer.enabled ? 'Disable' : 'Enable'}</span>
+                          </button>
+                        )}
+                        {canManage && (
+                          <button
+                            type="button"
+                            onClick={() => canShareConfig ? setSharingPeer(peer) : null}
+                            className={`ghost-button ${canShareConfig ? '' : 'ghost-button-disabled'}`}
+                            title={canShareConfig ? 'Share config' : 'This browser cannot unlock a shareable config for this peer'}
+                          >
+                            <Link2 size={16} />
+                            <span>Share</span>
+                          </button>
+                        )}
+                        {canManage && (
+                          <button
+                            type="button"
+                            onClick={() => canRevealConfig ? onSelectPeer(peer) : null}
+                            className={`primary-button ${canRevealConfig ? '' : 'primary-button-disabled'}`}
+                            title={canRevealConfig ? 'Open config' : 'This browser cannot decrypt the stored config'}
+                          >
+                            <QrCode size={16} />
+                            <span>Config</span>
+                          </button>
+                        )}
+                        {canManage && (
+                          <button type="button" onClick={() => handleDelete(peer.id)} className="ghost-button ghost-button-danger">
+                            <Trash2 size={16} />
+                            <span>Delete</span>
+                          </button>
+                        )}
                       </div>
                     </div>
 

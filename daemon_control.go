@@ -114,6 +114,15 @@ func restartManagedDaemon() error {
 	return nil
 }
 
+func restartManagedDaemonIfEnabled() {
+	if !*manageDaemon {
+		return
+	}
+	if err := restartManagedDaemon(); err != nil {
+		log.Printf("Auto-restart after transport change failed: %v", err)
+	}
+}
+
 func handleRestartDaemon(w http.ResponseWriter, r *http.Request) {
 	if err := restartManagedDaemon(); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)

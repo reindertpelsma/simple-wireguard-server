@@ -48,6 +48,13 @@ export default function SharedConfigPage({ token, theme, onToggleTheme }) {
           transport: shared.default_transport,
           presharedKey: shared.preshared_key,
           keepalive: shared.keepalive,
+          enableIPv6: shared.enable_client_ipv6,
+          allowedIPs: shared.client_allowed_ips,
+          directiveTCP: shared.client_config_tcp,
+          directiveTURN: shared.client_config_turn_url,
+          directiveSkipVerifyTLS: shared.client_config_skipverifytls,
+          directiveURL: shared.client_config_url,
+          distributePeers: shared.distribute_peers,
         });
 
         if (!cancelled) {

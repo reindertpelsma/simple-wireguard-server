@@ -23,6 +23,7 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
   const [isAdmin, setIsAdmin] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedPeer, setSelectedPeer] = useState(null);
+  const [currentUsername, setCurrentUsername] = useState('');
 
   useEffect(() => {
     async function checkAdmin() {
@@ -34,7 +35,17 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
       }
     }
 
+    async function fetchMe() {
+      try {
+        const me = await api.getMe();
+        setCurrentUsername(me?.username || '');
+      } catch {
+        // ignore
+      }
+    }
+
     checkAdmin();
+    fetchMe();
   }, []);
 
   const visibleTabs = tabs.filter((tab) => isAdmin || !tab.adminOnly);
@@ -103,7 +114,7 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
       </header>
 
       <main className="mx-auto w-full max-w-7xl px-4 py-6 pb-24 sm:px-6 lg:px-8">
-        {activeTab === 'peers' && <PeersTab isAdmin={isAdmin} onSelectPeer={setSelectedPeer} />}
+        {activeTab === 'peers' && <PeersTab isAdmin={isAdmin} currentUsername={currentUsername} onSelectPeer={setSelectedPeer} />}
         {activeTab === 'acls' && <ACLsTab />}
         {activeTab === 'transports' && <TransportsTab />}
         {activeTab === 'users' && <UsersTab />}

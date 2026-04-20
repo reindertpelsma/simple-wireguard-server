@@ -1,3 +1,16 @@
+function filterIPv6FromList(ips) {
+  if (!ips) return ips;
+  return ips.split(',')
+    .map((s) => s.trim())
+    .filter((s) => {
+      if (!s) return false;
+      const slash = s.indexOf('/');
+      const addr = slash >= 0 ? s.slice(0, slash) : s;
+      return !addr.includes(':');
+    })
+    .join(', ');
+}
+
 export function buildWireGuardConfig({
   privateKey,
   assignedIPs,
@@ -8,22 +21,47 @@ export function buildWireGuardConfig({
   transport,
   presharedKey,
   keepalive,
+  enableIPv6,
+  allowedIPs: customAllowedIPs,
+  directiveTCP,
+  directiveTURN,
+  directiveSkipVerifyTLS,
+  directiveURL,
+  distributePeers,
 }) {
+  const displayIPs = enableIPv6 === 'true' ? assignedIPs : filterIPv6FromList(assignedIPs);
+  const allowedIPs = customAllowedIPs || '0.0.0.0/0, ::/0';
+
   const lines = [
     '[Interface]',
     `PrivateKey = ${privateKey}`,
-    `Address = ${assignedIPs}`,
+    `Address = ${displayIPs}`,
     `DNS = ${dns || '1.1.1.1'}`,
     `MTU = ${mtu || '1420'}`,
-    '',
-    '[Peer]',
-    `PublicKey = ${serverPublicKey}`,
-    `Endpoint = ${endpoint}`,
-    'AllowedIPs = 0.0.0.0/0, ::/0',
   ];
 
-  if (transport && transport != 'udp') {
+  if (directiveTURN) {
+    lines.push(`#!TURN=${directiveTURN}`);
+  }
+
+  lines.push('', '[Peer]',
+    `PublicKey = ${serverPublicKey}`,
+    `Endpoint = ${endpoint}`,
+    `AllowedIPs = ${allowedIPs}`,
+  );
+
+  if (transport && transport !== 'udp') {
     lines.push(`Transport = ${transport}`);
+  }
+
+  if (directiveTCP && directiveTCP !== 'no') {
+    lines.push(`#!TCP=${directiveTCP}`);
+  }
+  if (directiveSkipVerifyTLS === 'yes') {
+    lines.push('#!SkipVerifyTLS=yes');
+  }
+  if (directiveURL) {
+    lines.push(`#!URL=${directiveURL}`);
   }
 
   if (presharedKey) {
@@ -31,6 +69,18 @@ export function buildWireGuardConfig({
   }
   if (Number(keepalive) > 0) {
     lines.push(`PersistentKeepalive = ${Number(keepalive)}`);
+  }
+
+  if (Array.isArray(distributePeers)) {
+    for (const dp of distributePeers) {
+      if (!dp.endpoint) continue;
+      lines.push('', '[Peer]',
+        `# ${dp.name} (distributed)`,
+        `PublicKey = ${dp.public_key}`,
+        `AllowedIPs = ${dp.allowed_ips}`,
+        `Endpoint = ${dp.endpoint}`,
+      );
+    }
   }
 
   return lines.join('\n');

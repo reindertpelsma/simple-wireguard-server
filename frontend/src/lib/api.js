@@ -57,6 +57,8 @@ export const api = {
 
   getPeers: () => request('/api/peers'),
 
+  getDistributePeers: () => request('/api/distribute-peers'),
+
   createPeer: (data) => 
     request('/api/peers', {
       method: 'POST',
