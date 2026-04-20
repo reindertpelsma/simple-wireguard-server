@@ -32,6 +32,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -132,6 +133,10 @@ func findDaemon(system bool) string {
 	name := "uwgsocks"
 	if system {
 		name = "uwgkm"
+	}
+
+	if runtime.GOOS == "windows" {
+		name += ".exe"
 	}
 
 	if _, err := os.Stat("./" + name); err == nil {
