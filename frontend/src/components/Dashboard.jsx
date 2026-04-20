@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { LogOut, Plus, Radio, Settings, ShieldAlert, Smartphone, Users } from 'lucide-react';
+import { ArrowLeftRight, LogOut, Plus, Radio, Settings, ShieldAlert, Smartphone, User, Users } from 'lucide-react';
 import { api } from '../lib/api';
 import AddPeerModal from './AddPeerModal';
 import ConfigModal from './ConfigModal';
@@ -8,14 +8,18 @@ import UsersTab from './UsersTab';
 import ACLsTab from './ACLsTab';
 import SettingsTab from './SettingsTab';
 import TransportsTab from './TransportsTab';
+import ForwardsTab from './ForwardsTab';
+import ProfileTab from './ProfileTab';
 import ThemeToggle from './ThemeToggle';
 
 const tabs = [
-  { id: 'peers', label: 'Peers', icon: Smartphone, adminOnly: false },
-  { id: 'acls', label: 'ACLs', icon: ShieldAlert, adminOnly: true },
-  { id: 'transports', label: 'Transports', icon: Radio, adminOnly: true },
-  { id: 'users', label: 'Users', icon: Users, adminOnly: true },
-  { id: 'settings', label: 'Settings', icon: Settings, adminOnly: true },
+  { id: 'peers',      label: 'Peers',      icon: Smartphone,    adminOnly: false },
+  { id: 'profile',    label: 'Profile',    icon: User,          adminOnly: false },
+  { id: 'acls',       label: 'ACLs',       icon: ShieldAlert,   adminOnly: true },
+  { id: 'transports', label: 'Transports', icon: Radio,         adminOnly: true },
+  { id: 'forwards',   label: 'Forwards',   icon: ArrowLeftRight, adminOnly: true },
+  { id: 'users',      label: 'Users',      icon: Users,         adminOnly: true },
+  { id: 'settings',   label: 'Settings',   icon: Settings,      adminOnly: true },
 ];
 
 export default function Dashboard({ theme, onToggleTheme, onLogout }) {
@@ -114,11 +118,13 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
       </header>
 
       <main className="mx-auto w-full max-w-7xl px-4 py-6 pb-24 sm:px-6 lg:px-8">
-        {activeTab === 'peers' && <PeersTab isAdmin={isAdmin} currentUsername={currentUsername} onSelectPeer={setSelectedPeer} />}
-        {activeTab === 'acls' && <ACLsTab />}
+        {activeTab === 'peers'      && <PeersTab isAdmin={isAdmin} currentUsername={currentUsername} onSelectPeer={setSelectedPeer} />}
+        {activeTab === 'profile'    && <ProfileTab />}
+        {activeTab === 'acls'       && <ACLsTab />}
         {activeTab === 'transports' && <TransportsTab />}
-        {activeTab === 'users' && <UsersTab />}
-        {activeTab === 'settings' && <SettingsTab />}
+        {activeTab === 'forwards'   && <ForwardsTab />}
+        {activeTab === 'users'      && <UsersTab />}
+        {activeTab === 'settings'   && <SettingsTab />}
       </main>
 
       <button

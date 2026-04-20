@@ -20,7 +20,7 @@ func TestACLTagExpansionForDaemonPayload(t *testing.T) {
 	if err := gdb.Create(&PolicyTag{Name: "staff", ExtraCIDRs: "100.64.99.0/24"}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := gdb.Create(&ACLRule{ListName: "outbound", Action: "allow", SrcTags: "staff", Dst: "100.64.10.10/32", Proto: "tcp", DPort: "443", Priority: 50}).Error; err != nil {
+	if err := gdb.Create(&ACLRule{ListName: "outbound", Action: "allow", SrcTags: "staff", Dst: "100.64.10.10/32", Proto: "tcp", DPort: "443"}).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -61,7 +61,7 @@ func TestACLTagInheritanceExpandsDaemonPayload(t *testing.T) {
 	if err := gdb.Create(&PolicyTag{Name: "admins", ParentTags: "staff", ExtraCIDRs: "100.64.88.0/24"}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := gdb.Create(&ACLRule{ListName: "outbound", Action: "allow", SrcTags: "staff", Dst: "100.64.10.10/32", Proto: "tcp", DPort: "443", Priority: 50}).Error; err != nil {
+	if err := gdb.Create(&ACLRule{ListName: "outbound", Action: "allow", SrcTags: "staff", Dst: "100.64.10.10/32", Proto: "tcp", DPort: "443"}).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -118,7 +118,7 @@ func TestAccessProxyACLUsesAuthenticatedUserTags(t *testing.T) {
 	gdb.Save(&user)
 	hash, _ := hashPassword("secret")
 	gdb.Create(&AccessProxyCredential{UserID: user.ID, Username: "proxy-user", PasswordHash: hash, Name: "test", Enabled: true})
-	gdb.Create(&ACLRule{ListName: "outbound", Action: "allow", SrcTags: "staff", Dst: "service.internal", Proto: "tcp", DPort: "443", Priority: 100})
+	gdb.Create(&ACLRule{ListName: "outbound", Action: "allow", SrcTags: "staff", Dst: "service.internal", Proto: "tcp", DPort: "443"})
 
 	req := httptest.NewRequest(http.MethodConnect, "http://ui.example", nil)
 	req.URL.Path = "/proxy/service.internal:443"
@@ -154,7 +154,7 @@ func TestAccessProxyACLUsesInheritedAuthenticatedUserTags(t *testing.T) {
 	gdb.Save(&user)
 	hash, _ := hashPassword("secret")
 	gdb.Create(&AccessProxyCredential{UserID: user.ID, Username: "proxy-user", PasswordHash: hash, Name: "test", Enabled: true})
-	gdb.Create(&ACLRule{ListName: "outbound", Action: "allow", SrcTags: "staff", Dst: "service.internal", Proto: "tcp", DPort: "443", Priority: 100})
+	gdb.Create(&ACLRule{ListName: "outbound", Action: "allow", SrcTags: "staff", Dst: "service.internal", Proto: "tcp", DPort: "443"})
 
 	req := httptest.NewRequest(http.MethodConnect, "http://ui.example", nil)
 	req.URL.Path = "/proxy/service.internal:443"
@@ -177,13 +177,14 @@ func TestAccessACLFirstMatchWildcardAndDefault(t *testing.T) {
 		t.Fatal("expected default deny without matching rule")
 	}
 
-	gdb.Create(&ACLRule{ListName: "outbound", Action: "allow", Proto: "tcp", DPort: "443", Priority: 10})
+	gdb.Create(&ACLRule{ListName: "outbound", Action: "allow", Proto: "tcp", DPort: "443", SortOrder: 1})
 	if !accessAllowedByACL(req, identity, "service.internal", 443, "tcp") {
 		t.Fatal("expected wildcard source and destination allow rule to match")
 	}
 
-	gdb.Create(&ACLRule{ListName: "outbound", Action: "deny", Proto: "tcp", Dst: "service.internal", DPort: "443", Priority: 100})
+	// Deny rule with lower sort_order appears before the allow rule → should match first.
+	gdb.Create(&ACLRule{ListName: "outbound", Action: "deny", Proto: "tcp", Dst: "service.internal", DPort: "443", SortOrder: 0})
 	if accessAllowedByACL(req, identity, "service.internal", 443, "tcp") {
-		t.Fatal("expected higher-priority deny rule to win before lower-priority allow")
+		t.Fatal("expected earlier deny rule to win before later allow")
 	}
 }

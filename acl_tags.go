@@ -236,12 +236,38 @@ func sourceCIDRsForTags(tags []string) []string {
 	return out
 }
 
+func sourceCIDRsForPeers(names []string) []string {
+	var out []string
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		var peer Peer
+		if err := gdb.First(&peer, "name = ?", name).Error; err != nil {
+			continue
+		}
+		out = append(out, splitCSVList(peer.AssignedIPs)...)
+	}
+	return out
+}
+
 func expandACLRuleSources(rule ACLRule) []string {
 	var sources []string
 	sources = append(sources, splitCSVList(rule.Src)...)
 	sources = append(sources, sourceCIDRsForUsers(splitCSVList(rule.SrcUsers))...)
 	sources = append(sources, sourceCIDRsForTags(splitCSVList(rule.SrcTags))...)
+	sources = append(sources, sourceCIDRsForPeers(splitCSVList(rule.SrcPeers))...)
 	return splitCSVList(strings.Join(sources, ","))
+}
+
+func expandACLRuleDests(rule ACLRule) []string {
+	var dests []string
+	dests = append(dests, splitCSVList(rule.Dst)...)
+	dests = append(dests, sourceCIDRsForUsers(splitCSVList(rule.DstUsers))...)
+	dests = append(dests, sourceCIDRsForTags(splitCSVList(rule.DstTags))...)
+	dests = append(dests, sourceCIDRsForPeers(splitCSVList(rule.DstPeers))...)
+	return splitCSVList(strings.Join(dests, ","))
 }
 
 func containsToken(list []string, token string) bool {
@@ -305,7 +331,7 @@ func accessAllowedByACL(r *http.Request, identity accessIdentity, host string, p
 
 func aclDecisionForAccess(r *http.Request, identity accessIdentity, host string, port int, proto string) (string, bool) {
 	var rules []ACLRule
-	gdb.Where("list_name = ?", "outbound").Order("priority desc").Find(&rules)
+	gdb.Where("list_name = ?", "outbound").Order("sort_order asc, id asc").Find(&rules)
 	for _, rule := range rules {
 		if !aclRuleMatchesAccess(rule, r, identity, host, port, proto) {
 			continue

@@ -133,8 +133,37 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+  updateACL: (id, data) =>
+    request(`/api/admin/acls/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
   deleteACL: (id) =>
     request(`/api/admin/acls/${id}`, {
+      method: 'DELETE',
+    }),
+  reorderACLs: (items) =>
+    request('/api/admin/acls/reorder', {
+      method: 'POST',
+      body: JSON.stringify(items),
+    }),
+  searchACLTokens: (q) =>
+    request(`/api/admin/acl-tokens?q=${encodeURIComponent(q)}`),
+
+  // Admin - Forwards
+  getForwards: () => request('/api/admin/forwards'),
+  createForward: (data) =>
+    request('/api/admin/forwards', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateForward: (id, data) =>
+    request(`/api/admin/forwards/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  deleteForward: (id) =>
+    request(`/api/admin/forwards/${id}`, {
       method: 'DELETE',
     }),
 
@@ -199,6 +228,12 @@ export const api = {
       method: 'DELETE',
     }),
 
+  updateMe: (data) =>
+    request('/api/me', {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+
   setupTOTP: () =>
     request('/api/me/2fa/setup', {
       method: 'POST',
@@ -212,6 +247,24 @@ export const api = {
 
   disableTOTP: () =>
     request('/api/me/2fa', {
+      method: 'DELETE',
+    }),
+
+  // Admin - user 2FA reset
+  adminResetUserTOTP: (id) =>
+    request(`/api/admin/users/${id}/2fa`, {
+      method: 'DELETE',
+    }),
+
+  // My proxy credentials (available to all users)
+  getMyProxyCredentials: () => request('/api/me/proxy-credentials'),
+  createMyProxyCredential: (data) =>
+    request('/api/me/proxy-credentials', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  deleteMyProxyCredential: (id) =>
+    request(`/api/me/proxy-credentials/${id}`, {
       method: 'DELETE',
     }),
 

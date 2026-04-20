@@ -1,12 +1,44 @@
 import { useEffect, useState } from 'react';
-import { Shield, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
+import { KeyRound, Shield, ShieldCheck, ShieldOff, Trash2, UserPlus } from 'lucide-react';
 import { api } from '../lib/api';
+
+function UserPasswordForm({ user, onDone }) {
+  const [pw, setPw] = useState('');
+  const handleSave = async (e) => {
+    e.preventDefault();
+    if (pw.length < 8) { alert('Password must be at least 8 characters.'); return; }
+    try {
+      await api.updateUser(user.id, { password: pw });
+      setPw('');
+      onDone();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+  return (
+    <form onSubmit={handleSave} className="flex items-center gap-2 mt-1">
+      <input
+        className="input-field h-8 text-sm py-1 w-40"
+        type="password"
+        placeholder="New password"
+        minLength={8}
+        required
+        value={pw}
+        onChange={e => setPw(e.target.value)}
+        autoFocus
+      />
+      <button type="submit" className="primary-button h-8 text-xs px-3 py-1">Save</button>
+      <button type="button" onClick={onDone} className="ghost-button h-8 text-xs px-3 py-1">Cancel</button>
+    </form>
+  );
+}
 
 export default function UsersTab() {
   const [users, setUsers] = useState([]);
   const [tags, setTags] = useState([]);
   const [newUser, setNewUser] = useState({ username: '', password: '', is_admin: false, tags: '' });
   const [newTag, setNewTag] = useState({ name: '', parent_tags: '', extra_cidrs: '' });
+  const [passwordEditId, setPasswordEditId] = useState(null);
 
   async function fetchUsers() {
     try {
@@ -94,6 +126,16 @@ export default function UsersTab() {
     if (!confirm('Delete user?')) return;
     try {
       await api.deleteUser(id);
+      fetchUsers();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const handleAdminResetTOTP = async (user) => {
+    if (!confirm(`Remove 2FA from ${user.username}? They will be able to log in without a code.`)) return;
+    try {
+      await api.adminResetUserTOTP(user.id);
       fetchUsers();
     } catch (err) {
       alert(err.message);
@@ -212,10 +254,37 @@ export default function UsersTab() {
                 </td>
                 <td>{new Date(user.created_at).toLocaleString()}</td>
                 <td className="text-right">
-                  <button type="button" onClick={() => handleDelete(user.id)} className="ghost-button ghost-button-danger">
-                    <Trash2 size={16} />
-                    <span>Delete</span>
-                  </button>
+                  <div className="flex flex-col items-end gap-1">
+                    <div className="flex gap-1">
+                      {!user.oidc_login && (
+                        <button
+                          type="button"
+                          onClick={() => setPasswordEditId(passwordEditId === user.id ? null : user.id)}
+                          className="ghost-button text-xs"
+                          title="Change password"
+                        >
+                          <KeyRound size={14} />
+                        </button>
+                      )}
+                      {!user.oidc_login && user.totp_enabled && (
+                        <button
+                          type="button"
+                          onClick={() => handleAdminResetTOTP(user)}
+                          className="ghost-button text-xs"
+                          title="Remove 2FA"
+                        >
+                          <ShieldOff size={14} />
+                        </button>
+                      )}
+                      <button type="button" onClick={() => handleDelete(user.id)} className="ghost-button ghost-button-danger">
+                        <Trash2 size={16} />
+                        <span>Delete</span>
+                      </button>
+                    </div>
+                    {passwordEditId === user.id && (
+                      <UserPasswordForm user={user} onDone={() => setPasswordEditId(null)} />
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}

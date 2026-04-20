@@ -28,7 +28,7 @@ func setupTestDB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{}, &AccessProxyCredential{}, &ExposedService{}, &PolicyTag{})
+	gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{}, &AccessProxyCredential{}, &ExposedService{}, &PolicyTag{}, &TunnelForward{})
 	initGlobalSettings()
 }
 
@@ -252,7 +252,6 @@ func TestACLManagement(t *testing.T) {
 		ListName: "inbound",
 		Action:   "deny",
 		Src:      "1.2.3.4/32",
-		Priority: 100,
 	}
 	b, _ := json.Marshal(rule)
 	req := httptest.NewRequest("POST", "/api/admin/acls", bytes.NewBuffer(b))

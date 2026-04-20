@@ -214,16 +214,34 @@ type GlobalConfig struct {
 }
 
 type ACLRule struct {
-	ID       uint   `gorm:"primaryKey" json:"id"`
-	ListName string `gorm:"not null" json:"list_name"` // inbound, outbound, relay
-	Action   string `gorm:"not null" json:"action"`    // allow, deny
-	Src      string `json:"src,omitempty"`
-	SrcUsers string `json:"src_users,omitempty"`
-	SrcTags  string `json:"src_tags,omitempty"`
-	Dst      string `json:"dst,omitempty"`
-	Proto    string `json:"proto,omitempty"`
-	DPort    string `json:"dport,omitempty"`
-	Priority int    `gorm:"default:0" json:"priority"`
+	ID        uint   `gorm:"primaryKey" json:"id"`
+	ListName  string `gorm:"not null" json:"list_name"` // inbound, outbound, relay
+	Action    string `gorm:"not null" json:"action"`    // allow, deny
+	Src       string `json:"src,omitempty"`
+	SrcUsers  string `json:"src_users,omitempty"`
+	SrcTags   string `json:"src_tags,omitempty"`
+	SrcPeers  string `json:"src_peers,omitempty"`
+	Dst       string `json:"dst,omitempty"`
+	DstUsers  string `json:"dst_users,omitempty"`
+	DstTags   string `json:"dst_tags,omitempty"`
+	DstPeers  string `json:"dst_peers,omitempty"`
+	Proto     string `json:"proto,omitempty"`
+	DPort     string `json:"dport,omitempty"`
+	SortOrder int    `gorm:"default:0" json:"sort_order"`
+}
+
+// TunnelForward stores a port-forwarding entry managed via the UI.
+// Reverse=false is a local forward (host-side listener → WireGuard target).
+// Reverse=true is a reverse forward (WireGuard-side listener → host target).
+type TunnelForward struct {
+	ID            uint   `gorm:"primaryKey" json:"id"`
+	Name          string `json:"name,omitempty"`
+	Reverse       bool   `gorm:"default:false" json:"reverse"`
+	Proto         string `gorm:"not null" json:"proto"` // tcp, udp
+	Listen        string `gorm:"not null" json:"listen"`
+	Target        string `gorm:"not null" json:"target"`
+	ProxyProtocol string `json:"proxy_protocol,omitempty"` // "", "v1", "v2"
+	SortOrder     int    `gorm:"default:0" json:"sort_order"`
 }
 
 // TransportConfig stores a pluggable transport entry managed via the UI.
@@ -551,9 +569,13 @@ func main() {
 	mux.HandleFunc("GET /api/auth/methods", handleAuthMethods)
 	mux.HandleFunc("GET /api/auth/hmac-nonce", authMiddleware(handleHMACNonce))
 	mux.HandleFunc("GET /api/me", authMiddleware(handleMe))
+	mux.HandleFunc("PATCH /api/me", authMiddleware(handleUpdateMe))
 	mux.HandleFunc("POST /api/me/2fa/setup", authMiddleware(handleTOTPSetup))
 	mux.HandleFunc("POST /api/me/2fa/enable", authMiddleware(handleTOTPEnable))
 	mux.HandleFunc("DELETE /api/me/2fa", authMiddleware(handleTOTPDisable))
+	mux.HandleFunc("GET /api/me/proxy-credentials", authMiddleware(handleGetMyProxyCredentials))
+	mux.HandleFunc("POST /api/me/proxy-credentials", authMiddleware(handleCreateMyProxyCredential))
+	mux.HandleFunc("DELETE /api/me/proxy-credentials/{id}", authMiddleware(handleDeleteMyProxyCredential))
 	mux.HandleFunc("GET /api/oidc/login", handleOIDCLogin)
 	mux.HandleFunc("GET /api/oidc/callback", handleOIDCCallback)
 	mux.HandleFunc("GET /api/share/{token}", handleGetSharedConfig)
@@ -574,6 +596,7 @@ func main() {
 	mux.HandleFunc("POST /api/admin/users", authMiddleware(adminMiddleware(handleCreateUser)))
 	mux.HandleFunc("PATCH /api/admin/users/{id}", authMiddleware(adminMiddleware(handleUpdateUser)))
 	mux.HandleFunc("DELETE /api/admin/users/{id}", authMiddleware(adminMiddleware(handleDeleteUser)))
+	mux.HandleFunc("DELETE /api/admin/users/{id}/2fa", authMiddleware(adminMiddleware(handleAdminDeleteUserTOTP)))
 	mux.HandleFunc("GET /api/admin/tags", authMiddleware(adminMiddleware(handleGetTags)))
 	mux.HandleFunc("POST /api/admin/tags", authMiddleware(adminMiddleware(handleCreateTag)))
 	mux.HandleFunc("PATCH /api/admin/tags/{id}", authMiddleware(adminMiddleware(handleUpdateTag)))
@@ -582,7 +605,16 @@ func main() {
 	// Admin - ACLs
 	mux.HandleFunc("GET /api/admin/acls", authMiddleware(adminMiddleware(handleGetACLs)))
 	mux.HandleFunc("POST /api/admin/acls", authMiddleware(adminMiddleware(handleCreateACL)))
+	mux.HandleFunc("PATCH /api/admin/acls/{id}", authMiddleware(adminMiddleware(handleUpdateACL)))
 	mux.HandleFunc("DELETE /api/admin/acls/{id}", authMiddleware(adminMiddleware(handleDeleteACL)))
+	mux.HandleFunc("POST /api/admin/acls/reorder", authMiddleware(adminMiddleware(handleReorderACLs)))
+	mux.HandleFunc("GET /api/admin/acl-tokens", authMiddleware(adminMiddleware(handleACLTokenSearch)))
+
+	// Admin - Forwards
+	mux.HandleFunc("GET /api/admin/forwards", authMiddleware(adminMiddleware(handleGetForwards)))
+	mux.HandleFunc("POST /api/admin/forwards", authMiddleware(adminMiddleware(handleCreateForward)))
+	mux.HandleFunc("PATCH /api/admin/forwards/{id}", authMiddleware(adminMiddleware(handleUpdateForward)))
+	mux.HandleFunc("DELETE /api/admin/forwards/{id}", authMiddleware(adminMiddleware(handleDeleteForward)))
 
 	mux.HandleFunc("GET /api/admin/transports", authMiddleware(adminMiddleware(handleGetTransports)))
 	mux.HandleFunc("POST /api/admin/transports", authMiddleware(adminMiddleware(handleCreateTransport)))
@@ -634,7 +666,7 @@ func initDB() {
 	}
 
 	// Auto Migration
-	err = gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{}, &AccessProxyCredential{}, &ExposedService{}, &PolicyTag{})
+	err = gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{}, &AccessProxyCredential{}, &ExposedService{}, &PolicyTag{}, &TunnelForward{})
 
 	if err != nil {
 		log.Fatalf("Failed to migrate database: %v", err)
@@ -726,7 +758,7 @@ func initGlobalSettings() {
 		// Canonical YAML Toggles
 		"yaml_l3_forwarding":       "true",
 		"yaml_block_rfc":           "true",
-		"yaml_host_forward":        "false",
+		"yaml_host_forward_redirect_ip": "127.0.0.1",
 		"yaml_socks5_port":         "1080",
 		"yaml_http_port":           "8118",
 		"yaml_proxy_username":      "",
@@ -1465,6 +1497,7 @@ func handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		Tags       *string `json:"tags"`
 		IsAdmin    *bool   `json:"is_admin"`
 		MaxConfigs *int    `json:"max_configs"`
+		Password   *string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
@@ -1479,10 +1512,139 @@ func handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if req.MaxConfigs != nil {
 		user.MaxConfigs = *req.MaxConfigs
 	}
+	if req.Password != nil && strings.TrimSpace(*req.Password) != "" {
+		if user.OIDCSubject != nil {
+			http.Error(w, "Cannot set password for OIDC user", http.StatusBadRequest)
+			return
+		}
+		hp, err := hashPassword(*req.Password)
+		if err != nil {
+			http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+			return
+		}
+		user.PasswordHash = hp
+	}
 	gdb.Save(&user)
 	generateCanonicalYAML()
 	pushACLsToDaemon()
 	w.WriteHeader(http.StatusOK)
+}
+
+func handleAdminDeleteUserTOTP(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var user User
+	if err := gdb.First(&user, id).Error; err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+	gdb.Model(&user).Updates(map[string]interface{}{"totp_enabled": false, "totp_secret": ""})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func handleUpdateMe(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUserFromRequest(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Password    *string `json:"password"`
+		OldPassword *string `json:"old_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.Password != nil {
+		if user.OIDCSubject != nil {
+			http.Error(w, "Cannot set password for OIDC account", http.StatusBadRequest)
+			return
+		}
+		if req.OldPassword == nil || !verifyPassword(*req.OldPassword, user.PasswordHash) {
+			http.Error(w, "Current password is incorrect", http.StatusUnauthorized)
+			return
+		}
+		hp, err := hashPassword(*req.Password)
+		if err != nil {
+			http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+			return
+		}
+		gdb.Model(&user).Update("password_hash", hp)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func handleGetMyProxyCredentials(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUserFromRequest(w, r)
+	if !ok {
+		return
+	}
+	var creds []AccessProxyCredential
+	gdb.Where("user_id = ?", user.ID).Find(&creds)
+	w.Header().Set("Content-Type", "application/json")
+	if creds == nil {
+		creds = []AccessProxyCredential{}
+	}
+	json.NewEncoder(w).Encode(creds)
+}
+
+func handleCreateMyProxyCredential(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUserFromRequest(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" {
+		req.Name = "Proxy access"
+	}
+	// Re-use the existing admin credential creation logic
+	b := make([]byte, 16)
+	rand.Read(b)
+	rawPw := hex.EncodeToString(b)
+	hp, err := hashPassword(rawPw)
+	if err != nil {
+		http.Error(w, "Failed to create credential", http.StatusInternalServerError)
+		return
+	}
+	username := fmt.Sprintf("u%d-%s", user.ID, hex.EncodeToString(b[:4]))
+	cred := AccessProxyCredential{
+		UserID:       user.ID,
+		Username:     username,
+		PasswordHash: hp,
+		Name:         req.Name,
+		Enabled:      true,
+	}
+	if err := gdb.Create(&cred).Error; err != nil {
+		http.Error(w, "Failed to create credential", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":       cred.ID,
+		"username": cred.Username,
+		"password": rawPw,
+		"name":     cred.Name,
+	})
+}
+
+func handleDeleteMyProxyCredential(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUserFromRequest(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	result := gdb.Where("id = ? AND user_id = ?", id, user.ID).Delete(&AccessProxyCredential{})
+	if result.RowsAffected == 0 {
+		http.Error(w, "Not found", http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleDeleteUser(w http.ResponseWriter, r *http.Request) {
@@ -1570,9 +1732,20 @@ func handleDeleteTag(w http.ResponseWriter, r *http.Request) {
 
 func handleGetACLs(w http.ResponseWriter, r *http.Request) {
 	var acls []ACLRule
-	gdb.Order("priority desc").Find(&acls)
+	gdb.Order("sort_order asc, id asc").Find(&acls)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(acls)
+}
+
+func normalizeACLRule(a *ACLRule) {
+	a.Src = joinCSVList(splitCSVList(a.Src))
+	a.SrcUsers = joinCSVList(splitCSVList(a.SrcUsers))
+	a.SrcTags = joinCSVList(splitCSVList(a.SrcTags))
+	a.SrcPeers = joinCSVList(splitCSVList(a.SrcPeers))
+	a.Dst = joinCSVList(splitCSVList(a.Dst))
+	a.DstUsers = joinCSVList(splitCSVList(a.DstUsers))
+	a.DstTags = joinCSVList(splitCSVList(a.DstTags))
+	a.DstPeers = joinCSVList(splitCSVList(a.DstPeers))
 }
 
 func handleCreateACL(w http.ResponseWriter, r *http.Request) {
@@ -1581,21 +1754,160 @@ func handleCreateACL(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
-	a.Src = joinCSVList(splitCSVList(a.Src))
-	a.SrcUsers = joinCSVList(splitCSVList(a.SrcUsers))
-	a.SrcTags = joinCSVList(splitCSVList(a.SrcTags))
-	a.Dst = joinCSVList(splitCSVList(a.Dst))
+	normalizeACLRule(&a)
+	// Assign sort_order = max + 1
+	var maxOrder int
+	gdb.Model(&ACLRule{}).Where("list_name = ?", a.ListName).Select("COALESCE(MAX(sort_order), -1)").Scan(&maxOrder)
+	a.SortOrder = maxOrder + 1
 	gdb.Create(&a)
-	generateCanonicalYAML()
 	pushACLsToDaemon()
 	w.WriteHeader(http.StatusCreated)
+}
+
+func handleUpdateACL(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var a ACLRule
+	if err := gdb.First(&a, id).Error; err != nil {
+		http.Error(w, "Not found", http.StatusNotFound)
+		return
+	}
+	if err := json.NewDecoder(r.Body).Decode(&a); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	normalizeACLRule(&a)
+	gdb.Save(&a)
+	pushACLsToDaemon()
+	w.WriteHeader(http.StatusOK)
 }
 
 func handleDeleteACL(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	gdb.Delete(&ACLRule{}, id)
-	generateCanonicalYAML()
 	pushACLsToDaemon()
+	w.WriteHeader(http.StatusOK)
+}
+
+func handleReorderACLs(w http.ResponseWriter, r *http.Request) {
+	var req []struct {
+		ID        uint `json:"id"`
+		SortOrder int  `json:"sort_order"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	for _, item := range req {
+		gdb.Model(&ACLRule{}).Where("id = ?", item.ID).Update("sort_order", item.SortOrder)
+	}
+	pushACLsToDaemon()
+	w.WriteHeader(http.StatusOK)
+}
+
+func handleACLTokenSearch(w http.ResponseWriter, r *http.Request) {
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	type token struct {
+		Type  string `json:"type"`
+		Value string `json:"value"`
+		Label string `json:"label"`
+	}
+	var results []token
+
+	// Users
+	var users []User
+	gdb.Order("username asc").Find(&users)
+	for _, u := range users {
+		if q == "" || strings.Contains(strings.ToLower(u.Username), q) {
+			results = append(results, token{"user", u.Username, u.Username})
+		}
+	}
+
+	// Tags
+	var tags []PolicyTag
+	gdb.Order("name asc").Find(&tags)
+	for _, t := range tags {
+		if q == "" || strings.Contains(strings.ToLower(t.Name), q) {
+			results = append(results, token{"tag", t.Name, t.Name})
+		}
+	}
+
+	// Peers
+	var peers []Peer
+	gdb.Order("name asc").Find(&peers)
+	for _, p := range peers {
+		if q == "" || strings.Contains(strings.ToLower(p.Name), q) {
+			label := p.Name
+			if p.AssignedIPs != "" {
+				label = p.Name + " (" + p.AssignedIPs + ")"
+			}
+			results = append(results, token{"peer", p.Name, label})
+		}
+	}
+
+	// If query looks like a CIDR or IP, include it as a suggestion
+	if q != "" {
+		if _, _, err := net.ParseCIDR(q); err == nil {
+			results = append(results, token{"cidr", q, q})
+		} else if net.ParseIP(q) != nil {
+			results = append(results, token{"cidr", q, q})
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if results == nil {
+		results = []token{}
+	}
+	json.NewEncoder(w).Encode(results)
+}
+
+func handleGetForwards(w http.ResponseWriter, r *http.Request) {
+	var fwds []TunnelForward
+	gdb.Order("sort_order asc, id asc").Find(&fwds)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(fwds)
+}
+
+func handleCreateForward(w http.ResponseWriter, r *http.Request) {
+	var f TunnelForward
+	if err := json.NewDecoder(r.Body).Decode(&f); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	if f.Proto == "" || f.Listen == "" || f.Target == "" {
+		http.Error(w, "proto, listen, and target are required", http.StatusBadRequest)
+		return
+	}
+	var maxOrder int
+	gdb.Model(&TunnelForward{}).Select("COALESCE(MAX(sort_order), -1)").Scan(&maxOrder)
+	f.SortOrder = maxOrder + 1
+	gdb.Create(&f)
+	generateCanonicalYAML()
+	restartManagedDaemon()
+	w.WriteHeader(http.StatusCreated)
+}
+
+func handleUpdateForward(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var f TunnelForward
+	if err := gdb.First(&f, id).Error; err != nil {
+		http.Error(w, "Not found", http.StatusNotFound)
+		return
+	}
+	if err := json.NewDecoder(r.Body).Decode(&f); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	gdb.Save(&f)
+	generateCanonicalYAML()
+	restartManagedDaemon()
+	w.WriteHeader(http.StatusOK)
+}
+
+func handleDeleteForward(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	gdb.Delete(&TunnelForward{}, id)
+	generateCanonicalYAML()
+	restartManagedDaemon()
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -1810,16 +2122,21 @@ func getTransportsConfig() []map[string]interface{} {
 func getACLConfig() map[string]interface{} {
 	getRules := func(list string) []map[string]interface{} {
 		var rules []ACLRule
-		gdb.Where("list_name = ?", list).Order("priority desc").Find(&rules)
+		gdb.Where("list_name = ?", list).Order("sort_order asc, id asc").Find(&rules)
 		var out []map[string]interface{}
 		for _, r := range rules {
 			sources := expandACLRuleSources(r)
+			dests := expandACLRuleDests(r)
 			if len(sources) == 0 {
-				out = append(out, aclRuleMap(r, ""))
-				continue
+				sources = []string{""}
 			}
-			for _, source := range sources {
-				out = append(out, aclRuleMap(r, source))
+			if len(dests) == 0 {
+				dests = []string{""}
+			}
+			for _, src := range sources {
+				for _, dst := range dests {
+					out = append(out, aclRuleMap(r, src, dst))
+				}
 			}
 		}
 		return out
@@ -1856,16 +2173,16 @@ func getACLConfig() map[string]interface{} {
 	return acl
 }
 
-func aclRuleMap(r ACLRule, source string) map[string]interface{} {
+func aclRuleMap(r ACLRule, source string, dest string) map[string]interface{} {
 	m := map[string]interface{}{"action": r.Action}
 	if source != "" {
 		m["source"] = source
 	}
-	if r.Proto != "" {
+	if r.Proto != "" && strings.ToLower(r.Proto) != "any" {
 		m["protocol"] = strings.ToUpper(r.Proto)
 	}
-	if r.Dst != "" {
-		m["destination"] = r.Dst
+	if dest != "" {
+		m["destination"] = dest
 	}
 	if r.DPort != "" {
 		m["destination_port"] = r.DPort
@@ -2265,6 +2582,47 @@ func buildCanonicalYAMLBytes(applyCustom bool) []byte {
 		"dns_server": map[string]interface{}{
 			"listen": getConfig("client_dns") + ":53",
 		},
+	}
+
+	// host_forward: enabled when redirect IP is non-empty
+	redirectIP := strings.TrimSpace(getConfig("yaml_host_forward_redirect_ip"))
+	if redirectIP != "" {
+		managed["host_forward"] = map[string]interface{}{
+			"proxy":   map[string]interface{}{"enabled": true, "redirect_ip": redirectIP},
+			"inbound": map[string]interface{}{"enabled": true, "redirect_ip": redirectIP},
+		}
+	} else {
+		managed["host_forward"] = map[string]interface{}{
+			"proxy":   map[string]interface{}{"enabled": false},
+			"inbound": map[string]interface{}{"enabled": false},
+		}
+	}
+
+	// Port forwards and reverse forwards
+	var fwRecords []TunnelForward
+	gdb.Order("sort_order asc, id asc").Find(&fwRecords)
+	var fwds []map[string]interface{}
+	var revFwds []map[string]interface{}
+	for _, f := range fwRecords {
+		m := map[string]interface{}{
+			"proto":  f.Proto,
+			"listen": f.Listen,
+			"target": f.Target,
+		}
+		if f.ProxyProtocol != "" {
+			m["proxy_protocol"] = f.ProxyProtocol
+		}
+		if f.Reverse {
+			revFwds = append(revFwds, m)
+		} else {
+			fwds = append(fwds, m)
+		}
+	}
+	if len(fwds) > 0 {
+		managed["forwards"] = fwds
+	}
+	if len(revFwds) > 0 {
+		managed["reverse_forwards"] = revFwds
 	}
 
 	if *turnServer != "" {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { FileText, KeyRound, Network, Power, Save, ShieldCheck } from 'lucide-react';
+import { FileText, Network, Power, Save } from 'lucide-react';
 import { api } from '../lib/api';
 
 export default function SettingsTab() {
@@ -7,9 +7,6 @@ export default function SettingsTab() {
   const [yamlInfo, setYamlInfo] = useState({ enabled: false, custom: '', effective: '', generated: '' });
   const [customYaml, setCustomYaml] = useState('');
   const [customEnabled, setCustomEnabled] = useState(false);
-  const [me, setMe] = useState(null);
-  const [proxyCredentials, setProxyCredentials] = useState([]);
-  const [createdProxyCredential, setCreatedProxyCredential] = useState(null);
   const [services, setServices] = useState([]);
   const [serviceForm, setServiceForm] = useState({
     name: '',
@@ -23,8 +20,6 @@ export default function SettingsTab() {
     ca_pem: '',
     client_cert_pem: '',
   });
-  const [totpSetup, setTotpSetup] = useState(null);
-  const [totpCode, setTotpCode] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
 
@@ -41,8 +36,6 @@ export default function SettingsTab() {
       setYamlInfo(currentYaml);
       setCustomYaml(currentYaml.custom || currentYaml.effective || currentYaml.generated || '');
       setCustomEnabled(!!currentYaml.enabled);
-      setMe(await api.getMe());
-      setProxyCredentials(await api.getProxyCredentials());
       setServices(await api.getExposedServices());
     } catch (err) {
       console.error(err);
@@ -88,74 +81,6 @@ export default function SettingsTab() {
     }
   };
 
-  const handleSetup2FA = async () => {
-    setBusy('2fa');
-    try {
-      const result = await api.setupTOTP();
-      setTotpSetup(result);
-      setTotpCode('');
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setBusy('');
-    }
-  };
-
-  const handleEnable2FA = async () => {
-    setBusy('2fa');
-    try {
-      await api.enableTOTP(totpCode);
-      setTotpSetup(null);
-      setTotpCode('');
-      setMe(await api.getMe());
-      alert('Two-factor authentication enabled.');
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setBusy('');
-    }
-  };
-
-  const handleDisable2FA = async () => {
-    if (!confirm('Disable two-factor authentication for your account?')) return;
-    setBusy('2fa');
-    try {
-      await api.disableTOTP();
-      setMe(await api.getMe());
-      setTotpSetup(null);
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setBusy('');
-    }
-  };
-
-  const handleCreateProxyCredential = async () => {
-    setBusy('proxy-credential');
-    try {
-      const cred = await api.createProxyCredential({ name: 'Browser proxy access' });
-      setCreatedProxyCredential(cred);
-      setProxyCredentials(await api.getProxyCredentials());
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setBusy('');
-    }
-  };
-
-  const handleDeleteProxyCredential = async (id) => {
-    if (!confirm('Delete this proxy credential?')) return;
-    setBusy('proxy-credential');
-    try {
-      await api.deleteProxyCredential(id);
-      setProxyCredentials(await api.getProxyCredentials());
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setBusy('');
-    }
-  };
-
   const handleCreateService = async (event) => {
     event.preventDefault();
     setBusy('service');
@@ -185,7 +110,8 @@ export default function SettingsTab() {
 
   const directiveKeys = ['enable_client_ipv6', 'client_allowed_ips', 'client_config_tcp', 'client_config_turn_url', 'client_config_skipverifytls', 'client_config_url'];
   const accessKeys = ['trusted_proxy_cidrs', 'web_base_url', 'http_proxy_access_enabled', 'socket_proxy_enabled', 'socket_proxy_http_port', 'exposed_services_enabled', 'service_auth_cookie_seconds'];
-  const editableConfigEntries = Object.entries(config).filter(([key]) => !['custom_yaml', 'custom_yaml_enabled', ...directiveKeys, ...accessKeys].includes(key));
+  const explicitKeys = ['yaml_host_forward_redirect_ip'];
+  const editableConfigEntries = Object.entries(config).filter(([key]) => !['custom_yaml', 'custom_yaml_enabled', ...directiveKeys, ...accessKeys, ...explicitKeys].includes(key));
 
   if (loading) {
     return <div className="state-shell py-24 text-[var(--muted)]">Loading settings…</div>;
@@ -217,6 +143,18 @@ export default function SettingsTab() {
             </div>
           ))}
 
+          <div className="space-y-2">
+            <label className="field-label">Host forward redirect IP</label>
+            <input
+              type="text"
+              className="input-field font-mono text-sm"
+              placeholder="127.0.0.1 — leave empty to disable"
+              value={config.yaml_host_forward_redirect_ip || ''}
+              onChange={(e) => setConfig({ ...config, yaml_host_forward_redirect_ip: e.target.value })}
+            />
+            <p className="text-xs text-[var(--muted)]">IP to redirect host-forward traffic to. Leave empty to disable host forwarding entirely.</p>
+          </div>
+
           <div className="md:col-span-2">
             <div className="flex flex-wrap gap-3">
               <button type="submit" className="primary-button">
@@ -230,47 +168,6 @@ export default function SettingsTab() {
             </div>
           </div>
         </form>
-
-        <div className="mt-6 rounded-3xl border border-[var(--border)] bg-[var(--surface-soft)] p-5">
-          <div className="mb-4 flex items-center gap-3">
-            <div className="brand-badge">
-              <ShieldCheck size={18} />
-            </div>
-            <div>
-              <span className="eyebrow">Account Security</span>
-              <h4 className="text-xl font-black tracking-tight">Two-factor authentication</h4>
-            </div>
-          </div>
-          <p className="mb-4 text-sm text-[var(--muted)]">
-            Status for {me?.username || 'your account'}: {me?.totp_enabled ? '2FA enabled' : '2FA not enabled'}.
-          </p>
-          {totpSetup && (
-            <div className="mb-4 space-y-3">
-              <div className="info-tile">
-                <span className="stat-label">Authenticator secret</span>
-                <strong className="break-all font-mono text-sm">{totpSetup.secret}</strong>
-                <code className="mt-2 block break-all text-xs">{totpSetup.otpauth_url}</code>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
-                <input className="input-field" inputMode="numeric" placeholder="Enter 6-digit code" value={totpCode} onChange={(event) => setTotpCode(event.target.value)} />
-                <button type="button" onClick={handleEnable2FA} disabled={busy === '2fa'} className="primary-button justify-center">Enable 2FA</button>
-              </div>
-            </div>
-          )}
-          <div className="flex flex-wrap gap-3">
-            {!me?.totp_enabled && (
-              <button type="button" onClick={handleSetup2FA} disabled={busy === '2fa'} className="secondary-button">
-                <KeyRound size={16} />
-                <span>{totpSetup ? 'Regenerate secret' : 'Set up 2FA'}</span>
-              </button>
-            )}
-            {me?.totp_enabled && (
-              <button type="button" onClick={handleDisable2FA} disabled={busy === '2fa'} className="ghost-button ghost-button-danger">
-                Disable 2FA
-              </button>
-            )}
-          </div>
-        </div>
 
         <div className="mt-6 rounded-3xl border border-[var(--border)] bg-[var(--surface-soft)] p-5">
           <div className="mb-4 flex items-center gap-3">
@@ -321,29 +218,6 @@ export default function SettingsTab() {
             </div>
           </form>
 
-          <div className="mt-6 grid gap-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <span className="field-label">Proxy credentials</span>
-                <p className="text-xs text-[var(--muted)]">The generated password is shown once.</p>
-              </div>
-              <button type="button" onClick={handleCreateProxyCredential} disabled={busy === 'proxy-credential'} className="secondary-button">Generate proxy password</button>
-            </div>
-            {createdProxyCredential && (
-              <div className="info-tile">
-                <span className="stat-label">New proxy login</span>
-                <strong className="break-all font-mono text-sm">{createdProxyCredential.username}:{createdProxyCredential.password}</strong>
-              </div>
-            )}
-            <div className="grid gap-2">
-              {proxyCredentials.map((cred) => (
-                <div key={cred.id} className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border)] px-3 py-2 text-sm">
-                  <span className="font-mono">{cred.username}</span>
-                  <button type="button" onClick={() => handleDeleteProxyCredential(cred.id)} className="ghost-button ghost-button-danger">Delete</button>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       </section>
 
