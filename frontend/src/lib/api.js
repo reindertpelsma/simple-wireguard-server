@@ -101,8 +101,28 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+  updateUser: (id, data) =>
+    request(`/api/admin/users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
   deleteUser: (id) => 
     request(`/api/admin/users/${id}`, {
+      method: 'DELETE',
+    }),
+  getTags: () => request('/api/admin/tags'),
+  createTag: (data) =>
+    request('/api/admin/tags', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateTag: (id, data) =>
+    request(`/api/admin/tags/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  deleteTag: (id) =>
+    request(`/api/admin/tags/${id}`, {
       method: 'DELETE',
     }),
 

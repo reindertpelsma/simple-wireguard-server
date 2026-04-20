@@ -1,9 +1,9 @@
 # Stage 1: Build the React frontend
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app
-COPY uwgsocks-ui/frontend/package*.json ./
+COPY frontend/package*.json ./
 RUN npm install
-COPY uwgsocks-ui/frontend/ ./
+COPY frontend/ ./
 RUN npm run build
 
 # Stage 2: Build the Go binaries
@@ -12,7 +12,9 @@ RUN apk add --no-cache git gcc musl-dev
 WORKDIR /src
 
 # Build uwgsocks
-COPY . .
+COPY --from=uwgsocks-src . /src/userspace-wireguard-socks/
+COPY . /src/uwgsocks-ui/
+WORKDIR /src/userspace-wireguard-socks
 RUN CGO_ENABLED=0 go build -ldflags="-s -w -extldflags '-static'" -o /bin/uwgsocks ./cmd/uwgsocks
 
 # Build uwgkm

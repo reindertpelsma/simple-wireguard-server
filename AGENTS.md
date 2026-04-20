@@ -14,6 +14,7 @@ A WireGuard server manager UI (`uwgsocks-ui` binary) that manages an `uwgsocks` 
 - `share.go` — shareable config link handling
 - `request_origin.go` — trusted reverse proxy CIDRs, canonical URL, client IP helpers
 - `access_proxy.go` — `/proxy`, `/socket`, and exposed-service reverse proxy handling
+- `acl_tags.go` — user/peer policy tag expansion and backend ACL evaluation for browser/proxy access
 - `oidc.go` — OIDC login integration
 - `auth_extra.go` — TOTP/2FA helpers
 - `frontend/` — Vite/React frontend (components in `src/components/`)
@@ -23,6 +24,7 @@ A WireGuard server manager UI (`uwgsocks-ui` binary) that manages an `uwgsocks` 
 ## Database (GORM/SQLite default)
 Models: `User`, `Peer`, `GlobalConfig`, `ACLRule`, `TransportConfig`, `SharedConfigLink`.
 Reverse proxy/access models: `AccessProxyCredential`, `ExposedService`.
+Policy tag model: `PolicyTag`; `User.Tags`, `Peer.Tags`, `ACLRule.SrcUsers`, and `ACLRule.SrcTags` are expanded into concrete IP/CIDR ACLs before pushing to uwgsocks.
 
 `GlobalConfig` is a key-value table. Settings are read with `getConfig(key)` and written with `gdb.Model(&GlobalConfig{}).Where("key = ?", k).Update("value", v)`.
 

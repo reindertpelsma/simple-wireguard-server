@@ -153,6 +153,7 @@ type User struct {
 	TOTPEnabled  bool      `gorm:"default:false" json:"totp_enabled"`
 	OIDCProvider string    `json:"oidc_provider,omitempty"`
 	OIDCSubject  *string   `gorm:"uniqueIndex" json:"oidc_subject,omitempty"`
+	Tags         string    `json:"tags,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 	Peers        []Peer    `gorm:"foreignKey:UserID" json:"peers,omitempty"`
@@ -164,6 +165,7 @@ type Peer struct {
 	User                User       `gorm:"foreignKey:UserID" json:"-"`
 	Username            string     `gorm:"-" json:"username,omitempty"`
 	Name                string     `gorm:"not null" json:"name"`
+	Tags                string     `json:"tags,omitempty"`
 	AssignedIPs         string     `gorm:"not null" json:"assigned_ips"`
 	Keepalive           int        `gorm:"default:0" json:"keepalive"`
 	EndpointIP          string     `json:"endpoint_ip,omitempty"`
@@ -208,6 +210,8 @@ type ACLRule struct {
 	ListName string `gorm:"not null" json:"list_name"` // inbound, outbound, relay
 	Action   string `gorm:"not null" json:"action"`    // allow, deny
 	Src      string `json:"src,omitempty"`
+	SrcUsers string `json:"src_users,omitempty"`
+	SrcTags  string `json:"src_tags,omitempty"`
 	Dst      string `json:"dst,omitempty"`
 	Proto    string `json:"proto,omitempty"`
 	DPort    string `json:"dport,omitempty"`
@@ -560,7 +564,12 @@ func main() {
 	// Admin - Users
 	mux.HandleFunc("GET /api/admin/users", authMiddleware(adminMiddleware(handleGetUsers)))
 	mux.HandleFunc("POST /api/admin/users", authMiddleware(adminMiddleware(handleCreateUser)))
+	mux.HandleFunc("PATCH /api/admin/users/{id}", authMiddleware(adminMiddleware(handleUpdateUser)))
 	mux.HandleFunc("DELETE /api/admin/users/{id}", authMiddleware(adminMiddleware(handleDeleteUser)))
+	mux.HandleFunc("GET /api/admin/tags", authMiddleware(adminMiddleware(handleGetTags)))
+	mux.HandleFunc("POST /api/admin/tags", authMiddleware(adminMiddleware(handleCreateTag)))
+	mux.HandleFunc("PATCH /api/admin/tags/{id}", authMiddleware(adminMiddleware(handleUpdateTag)))
+	mux.HandleFunc("DELETE /api/admin/tags/{id}", authMiddleware(adminMiddleware(handleDeleteTag)))
 
 	// Admin - ACLs
 	mux.HandleFunc("GET /api/admin/acls", authMiddleware(adminMiddleware(handleGetACLs)))
@@ -617,7 +626,7 @@ func initDB() {
 	}
 
 	// Auto Migration
-	err = gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{}, &AccessProxyCredential{}, &ExposedService{})
+	err = gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{}, &AccessProxyCredential{}, &ExposedService{}, &PolicyTag{})
 
 	if err != nil {
 		log.Fatalf("Failed to migrate database: %v", err)
@@ -934,6 +943,7 @@ func handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		Name                string     `json:"name"`
+		Tags                string     `json:"tags"`
 		PublicKey           string     `json:"public_key"`
 		NonceHash           string     `json:"nonce_hash"`
 		EncryptedPrivateKey string     `json:"encrypted_private_key"`
@@ -991,6 +1001,7 @@ func handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 	peer := Peer{
 		UserID:              userID,
 		Name:                req.Name,
+		Tags:                joinCSVList(splitCSVList(req.Tags)),
 		AssignedIPs:         assignedIP,
 		PublicKey:           req.PublicKey,
 		NonceHash:           req.NonceHash,
@@ -1013,6 +1024,9 @@ func handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to save peer (public key must be unique)", http.StatusInternalServerError)
 		return
 	}
+
+	// Update expanded ACLs before returning the new config material.
+	pushACLsToDaemon()
 
 	// Sync directly to uwgsocks API
 	pushPeerToDaemon(peer)
@@ -1195,6 +1209,8 @@ func handleDeletePeer(w http.ResponseWriter, r *http.Request) {
 	gdb.Where("peer_id = ?", peer.ID).Delete(&SharedConfigLink{})
 	removePeerFromDaemon(peer.PublicKey)
 	gdb.Delete(&peer)
+	generateCanonicalYAML()
+	pushACLsToDaemon()
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -1261,6 +1277,7 @@ func handleUpdatePeer(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		Name               *string    `json:"name"`
+		Tags               *string    `json:"tags"`
 		AssignedIPs        *string    `json:"assigned_ips"`
 		Keepalive          *int       `json:"keepalive"`
 		Enabled            *bool      `json:"enabled"`
@@ -1279,8 +1296,14 @@ func handleUpdatePeer(w http.ResponseWriter, r *http.Request) {
 	if req.Name != nil {
 		peer.Name = *req.Name
 	}
+	aclNeedsRefresh := false
+	if req.Tags != nil && isAdmin {
+		peer.Tags = joinCSVList(splitCSVList(*req.Tags))
+		aclNeedsRefresh = true
+	}
 	if req.AssignedIPs != nil && isAdmin {
 		peer.AssignedIPs = *req.AssignedIPs
+		aclNeedsRefresh = true
 	}
 	if req.Keepalive != nil {
 		peer.Keepalive = *req.Keepalive
@@ -1307,6 +1330,9 @@ func handleUpdatePeer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	gdb.Save(&peer)
+	if aclNeedsRefresh {
+		pushACLsToDaemon()
+	}
 
 	if peer.Enabled && (peer.ExpiresAt == nil || peer.ExpiresAt.After(time.Now())) {
 		pushPeerToDaemon(peer)
@@ -1405,18 +1431,50 @@ func handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Password string `json:"password"`
 		IsAdmin  bool   `json:"is_admin"`
+		Tags     string `json:"tags"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
 	hp, _ := hashPassword(req.Password)
-	user := User{Username: req.Username, PasswordHash: hp, IsAdmin: req.IsAdmin}
+	user := User{Username: req.Username, PasswordHash: hp, IsAdmin: req.IsAdmin, Tags: joinCSVList(splitCSVList(req.Tags))}
 	if err := gdb.Create(&user).Error; err != nil {
 		http.Error(w, "Username already exists", http.StatusConflict)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
+}
+
+func handleUpdateUser(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var user User
+	if err := gdb.First(&user, id).Error; err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+	var req struct {
+		Tags       *string `json:"tags"`
+		IsAdmin    *bool   `json:"is_admin"`
+		MaxConfigs *int    `json:"max_configs"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.Tags != nil {
+		user.Tags = joinCSVList(splitCSVList(*req.Tags))
+	}
+	if req.IsAdmin != nil {
+		user.IsAdmin = *req.IsAdmin
+	}
+	if req.MaxConfigs != nil {
+		user.MaxConfigs = *req.MaxConfigs
+	}
+	gdb.Save(&user)
+	generateCanonicalYAML()
+	pushACLsToDaemon()
+	w.WriteHeader(http.StatusOK)
 }
 
 func handleDeleteUser(w http.ResponseWriter, r *http.Request) {
@@ -1426,7 +1484,70 @@ func handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	gdb.Delete(&User{}, id)
+	generateCanonicalYAML()
+	pushACLsToDaemon()
 	w.WriteHeader(http.StatusOK)
+}
+
+func handleGetTags(w http.ResponseWriter, r *http.Request) {
+	var tags []PolicyTag
+	gdb.Order("name asc").Find(&tags)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tags)
+}
+
+func handleCreateTag(w http.ResponseWriter, r *http.Request) {
+	var tag PolicyTag
+	if err := json.NewDecoder(r.Body).Decode(&tag); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	tag.Name = strings.TrimSpace(tag.Name)
+	tag.ExtraCIDRs = joinCSVList(splitCSVList(tag.ExtraCIDRs))
+	if tag.Name == "" {
+		http.Error(w, "Tag name is required", http.StatusBadRequest)
+		return
+	}
+	if err := gdb.Create(&tag).Error; err != nil {
+		http.Error(w, "Tag already exists", http.StatusConflict)
+		return
+	}
+	generateCanonicalYAML()
+	pushACLsToDaemon()
+	w.WriteHeader(http.StatusCreated)
+}
+
+func handleUpdateTag(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var tag PolicyTag
+	if err := gdb.First(&tag, id).Error; err != nil {
+		http.Error(w, "Tag not found", http.StatusNotFound)
+		return
+	}
+	var req PolicyTag
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Name) != "" {
+		tag.Name = strings.TrimSpace(req.Name)
+	}
+	tag.ExtraCIDRs = joinCSVList(splitCSVList(req.ExtraCIDRs))
+	if err := gdb.Save(&tag).Error; err != nil {
+		http.Error(w, "Failed to update tag", http.StatusConflict)
+		return
+	}
+	generateCanonicalYAML()
+	pushACLsToDaemon()
+	w.WriteHeader(http.StatusOK)
+}
+
+func handleDeleteTag(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	gdb.Delete(&PolicyTag{}, id)
+	generateCanonicalYAML()
+	pushACLsToDaemon()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleGetACLs(w http.ResponseWriter, r *http.Request) {
@@ -1442,6 +1563,10 @@ func handleCreateACL(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
+	a.Src = joinCSVList(splitCSVList(a.Src))
+	a.SrcUsers = joinCSVList(splitCSVList(a.SrcUsers))
+	a.SrcTags = joinCSVList(splitCSVList(a.SrcTags))
+	a.Dst = joinCSVList(splitCSVList(a.Dst))
 	gdb.Create(&a)
 	generateCanonicalYAML()
 	pushACLsToDaemon()
@@ -1670,20 +1795,14 @@ func getACLConfig() map[string]interface{} {
 		gdb.Where("list_name = ?", list).Order("priority desc").Find(&rules)
 		var out []map[string]interface{}
 		for _, r := range rules {
-			m := map[string]interface{}{"action": r.Action}
-			if r.Src != "" {
-				m["source"] = r.Src
+			sources := expandACLRuleSources(r)
+			if len(sources) == 0 {
+				out = append(out, aclRuleMap(r, ""))
+				continue
 			}
-			if r.Proto != "" {
-				m["protocol"] = strings.ToUpper(r.Proto)
+			for _, source := range sources {
+				out = append(out, aclRuleMap(r, source))
 			}
-			if r.Dst != "" {
-				m["destination"] = r.Dst
-			}
-			if r.DPort != "" {
-				m["destination_port"] = r.DPort
-			}
-			out = append(out, m)
 		}
 		return out
 	}
@@ -1717,6 +1836,23 @@ func getACLConfig() map[string]interface{} {
 		acl["outbound"] = append(rfc, acl["outbound"].([]map[string]interface{})...)
 	}
 	return acl
+}
+
+func aclRuleMap(r ACLRule, source string) map[string]interface{} {
+	m := map[string]interface{}{"action": r.Action}
+	if source != "" {
+		m["source"] = source
+	}
+	if r.Proto != "" {
+		m["protocol"] = strings.ToUpper(r.Proto)
+	}
+	if r.Dst != "" {
+		m["destination"] = r.Dst
+	}
+	if r.DPort != "" {
+		m["destination_port"] = r.DPort
+	}
+	return m
 }
 
 func pushACLsToDaemon() {

@@ -48,6 +48,7 @@ Build a secure, rootless SD-WAN or VPN exit node in seconds.
 - **NAT Traversal:** Built-in TURN server support for connectivity through strict firewalls/CGNAT, by hosting a small TURN server see the userspace wireguard socks project.
 - **Secure by Default:** Argon2id hashing, encryption at rest for DB fields, and single-port HTTP/HTTPS multiplexing.
 - **Reverse Proxy Aware:** Trust configured proxy CIDRs for `X-Forwarded-For` / `X-Forwarded-Proto`, set an explicit canonical base URL, and expose optional browser access paths through `/proxy`, `/socket`, and protected service subdomains.
+- **Tag-based ACLs:** Assign policy tags to users and peers, attach extra CIDRs to tags, and write ACLs against users or tags while the daemon still receives concrete IP/CIDR rules.
 
 ## Advanced Usage
 

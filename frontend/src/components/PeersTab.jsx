@@ -20,8 +20,9 @@ import { api } from '../lib/api';
 import { formatBytes } from '../lib/config';
 import TrafficSparkline from './TrafficSparkline';
 
-function formatBps(value) {
-  const bps = Number(value || 0);
+// Values stored and sent to the daemon are bytes/sec; display as bits/sec (network convention).
+function formatBps(bytesPerSec) {
+  const bps = Number(bytesPerSec || 0) * 8;
   if (bps <= 0) return 'unlimited';
   const units = ['bps', 'Kbps', 'Mbps', 'Gbps'];
   let scaled = bps;
@@ -31,6 +32,67 @@ function formatBps(value) {
     index += 1;
   }
   return `${scaled >= 10 || index === 0 ? scaled.toFixed(0) : scaled.toFixed(1)} ${units[index]}`;
+}
+
+const BANDWIDTH_UNITS = [
+  { label: 'bps',  factor: 1 / 8 },
+  { label: 'Kbps', factor: 1000 / 8 },
+  { label: 'Mbps', factor: 1_000_000 / 8 },
+  { label: 'Gbps', factor: 1_000_000_000 / 8 },
+  { label: 'B/s',  factor: 1 },
+  { label: 'KB/s', factor: 1_000 },
+  { label: 'MB/s', factor: 1_000_000 },
+  { label: 'GB/s', factor: 1_000_000_000 },
+];
+
+function bytesToDisplay(bytesPerSec) {
+  if (!bytesPerSec || bytesPerSec <= 0) return { displayValue: '', unit: 'Mbps' };
+  const bitsPerSec = bytesPerSec * 8;
+  if (bitsPerSec >= 1_000_000_000) return { displayValue: String(+(bitsPerSec / 1_000_000_000).toPrecision(4)), unit: 'Gbps' };
+  if (bitsPerSec >= 1_000_000) return { displayValue: String(+(bitsPerSec / 1_000_000).toPrecision(4)), unit: 'Mbps' };
+  if (bitsPerSec >= 1_000) return { displayValue: String(+(bitsPerSec / 1_000).toPrecision(4)), unit: 'Kbps' };
+  return { displayValue: String(bitsPerSec), unit: 'bps' };
+}
+
+function BandwidthInput({ initialValue, onChange }) {
+  const init = bytesToDisplay(initialValue);
+  const [displayValue, setDisplayValue] = useState(init.displayValue);
+  const [unit, setUnit] = useState(init.unit);
+
+  const emit = (val, u) => {
+    const unitDef = BANDWIDTH_UNITS.find((x) => x.label === u);
+    const bytes = parseFloat(val) * (unitDef?.factor ?? 1);
+    onChange(isNaN(bytes) || bytes < 0 ? 0 : Math.round(bytes));
+  };
+
+  const handleValueChange = (e) => {
+    setDisplayValue(e.target.value);
+    emit(e.target.value, unit);
+  };
+
+  const handleUnitChange = (e) => {
+    setUnit(e.target.value);
+    emit(displayValue, e.target.value);
+  };
+
+  return (
+    <div className="flex gap-1">
+      <input
+        type="number"
+        min="0"
+        step="any"
+        placeholder="0 = unlimited"
+        className="input-field min-w-0 flex-1"
+        value={displayValue}
+        onChange={handleValueChange}
+      />
+      <select className="input-field w-[6.5rem] px-2" value={unit} onChange={handleUnitChange}>
+        {BANDWIDTH_UNITS.map((u) => (
+          <option key={u.label} value={u.label}>{u.label}</option>
+        ))}
+      </select>
+    </div>
+  );
 }
 
 function parseNumberField(value) {
@@ -157,12 +219,13 @@ function ShareModal({ peer, onClose }) {
 function EditPeerModal({ peer, isAdmin, onClose, onSave }) {
   const [form, setForm] = useState({
     name: peer.name,
+    tags: peer.tags || '',
     assigned_ips: peer.assigned_ips,
     static_endpoint: peer.static_endpoint || '',
     keepalive: peer.keepalive ? String(peer.keepalive) : '',
     expires_at: peer.expires_at ? new Date(peer.expires_at).toISOString().slice(0, 16) : '',
-    traffic_upload_bps: peer.traffic_upload_bps ? String(peer.traffic_upload_bps) : '',
-    traffic_download_bps: peer.traffic_download_bps ? String(peer.traffic_download_bps) : '',
+    traffic_upload_bps: peer.traffic_upload_bps || 0,
+    traffic_download_bps: peer.traffic_download_bps || 0,
     traffic_latency_ms: peer.traffic_latency_ms ? String(peer.traffic_latency_ms) : '',
     is_distribute: peer.is_distribute || false,
     distribute_endpoint: peer.distribute_endpoint || '',
@@ -172,14 +235,15 @@ function EditPeerModal({ peer, isAdmin, onClose, onSave }) {
     event.preventDefault();
     await onSave(peer.id, {
       name: form.name,
+      ...(isAdmin ? { tags: form.tags } : {}),
       ...(isAdmin ? { assigned_ips: form.assigned_ips } : {}),
       static_endpoint: form.static_endpoint,
       keepalive: form.keepalive.trim() === '' ? 0 : Number.parseInt(form.keepalive, 10),
       expires_at: form.expires_at ? new Date(form.expires_at).toISOString() : null,
       ...(isAdmin ? {
         traffic_shaper: {
-          upload_bps: parseNumberField(form.traffic_upload_bps),
-          download_bps: parseNumberField(form.traffic_download_bps),
+          upload_bps: form.traffic_upload_bps,
+          download_bps: form.traffic_download_bps,
           latency_ms: parseNumberField(form.traffic_latency_ms),
         },
         is_distribute: form.is_distribute,
@@ -214,6 +278,13 @@ function EditPeerModal({ peer, isAdmin, onClose, onSave }) {
             </div>
           )}
 
+          {isAdmin && (
+            <div className="space-y-2">
+              <label className="field-label">Policy tags</label>
+              <input className="input-field" placeholder="admins, lab" value={form.tags} onChange={(event) => setForm({ ...form, tags: event.target.value })} />
+            </div>
+          )}
+
           <div className="grid gap-5 sm:grid-cols-2">
             <div className="space-y-2">
               <label className="field-label">Static Endpoint</label>
@@ -234,21 +305,24 @@ function EditPeerModal({ peer, isAdmin, onClose, onSave }) {
             <div className="space-y-3 rounded-3xl border border-[var(--border)] bg-[var(--surface-soft)] p-4">
               <div>
                 <span className="eyebrow">Traffic Shaper</span>
-                <p className="mt-2 text-sm text-[var(--muted)]">Set per-peer limits live through the daemon API. Leave a field blank or zero to disable that dimension.</p>
+                <p className="mt-2 text-sm text-[var(--muted)]">
+                  Limits are applied live via the daemon API. The daemon stores values as bytes/sec internally — select your preferred unit and the conversion is handled automatically.
+                  Zero means unlimited. <em>Changes only affect new connections; existing connections keep the previous limit until they reconnect.</em>
+                </p>
               </div>
-              <div className="grid gap-5 sm:grid-cols-3">
+              <div className="grid gap-5 sm:grid-cols-2">
                 <div className="space-y-2">
-                  <label className="field-label">Upload bps</label>
-                  <input className="input-field" type="number" min="0" placeholder="0" value={form.traffic_upload_bps} onChange={(event) => setForm({ ...form, traffic_upload_bps: event.target.value })} />
+                  <label className="field-label">Upload limit</label>
+                  <BandwidthInput initialValue={form.traffic_upload_bps} onChange={(bps) => setForm((f) => ({ ...f, traffic_upload_bps: bps }))} />
                 </div>
                 <div className="space-y-2">
-                  <label className="field-label">Download bps</label>
-                  <input className="input-field" type="number" min="0" placeholder="0" value={form.traffic_download_bps} onChange={(event) => setForm({ ...form, traffic_download_bps: event.target.value })} />
+                  <label className="field-label">Download limit</label>
+                  <BandwidthInput initialValue={form.traffic_download_bps} onChange={(bps) => setForm((f) => ({ ...f, traffic_download_bps: bps }))} />
                 </div>
-                <div className="space-y-2">
-                  <label className="field-label">Latency ms</label>
-                  <input className="input-field" type="number" min="0" placeholder="0" value={form.traffic_latency_ms} onChange={(event) => setForm({ ...form, traffic_latency_ms: event.target.value })} />
-                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="field-label">Target latency (ms)</label>
+                <input className="input-field" type="number" min="0" placeholder="15 (default)" value={form.traffic_latency_ms} onChange={(event) => setForm({ ...form, traffic_latency_ms: event.target.value })} />
               </div>
             </div>
           )}

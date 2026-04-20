@@ -1,10 +1,10 @@
-version: '3.8'
-
 services:
   uwgsocks-ui:
     build:
-      context: ..
-      dockerfile: uwgsocks-ui/Dockerfile
+      context: .
+      dockerfile: Dockerfile
+      additional_contexts:
+        uwgsocks-src: ../userspace-wireguard-socks
     image: uwgsocks-ui:latest
     dns:
       - 8.8.8.8

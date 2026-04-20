@@ -148,7 +148,8 @@ func TestHTTPAccessProxyConnect(t *testing.T) {
 	_, port, _ := net.SplitHostPort(u.Host)
 	setTestConfig(t, "yaml_http_port", port)
 	hash, _ := hashPassword("secret")
-	gdb.Create(&AccessProxyCredential{UserID: 1, Username: "proxy-user", PasswordHash: hash, Name: "test", Enabled: true})
+	user, _ := createTestUser(t, "proxy-owner", false)
+	gdb.Create(&AccessProxyCredential{UserID: user.ID, Username: "proxy-user", PasswordHash: hash, Name: "test", Enabled: true})
 
 	server := httptest.NewServer(wrapRootHandler(http.NewServeMux()))
 	defer server.Close()
@@ -188,7 +189,8 @@ func TestHTTPAccessProxyAbsoluteRequestRewritesUpstreamAuth(t *testing.T) {
 	_, port, _ := net.SplitHostPort(u.Host)
 	setTestConfig(t, "yaml_http_port", port)
 	hash, _ := hashPassword("user-secret")
-	gdb.Create(&AccessProxyCredential{UserID: 1, Username: "proxy-user", PasswordHash: hash, Name: "test", Enabled: true})
+	user, _ := createTestUser(t, "proxy-owner", false)
+	gdb.Create(&AccessProxyCredential{UserID: user.ID, Username: "proxy-user", PasswordHash: hash, Name: "test", Enabled: true})
 
 	req := httptest.NewRequest("GET", "http://service.internal/status", nil)
 	req.RequestURI = "http://service.internal/status"

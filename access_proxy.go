@@ -273,15 +273,30 @@ func handleExposedService(w http.ResponseWriter, r *http.Request, svc ExposedSer
 		handleServiceAuthCallback(w, r, svc)
 		return
 	}
+	var identity accessIdentity
+	hasIdentity := false
 	if svc.AuthMode == "login" && !serviceBypassAllowed(r, svc) {
-		if !validServiceCookie(r, svc) {
+		var ok bool
+		identity, ok = serviceCookieIdentity(r, svc)
+		if !ok {
 			redirectToServiceAuth(w, r, svc)
 			return
 		}
+		hasIdentity = true
 		if svc.CORSProtection && !serviceCORSAllowed(r, svc) {
 			handleServiceCORSBlocked(w, r)
 			return
 		}
+	}
+	targetURL, _ := url.Parse(svc.TargetURL)
+	host, port, ok := hostPortForAccessTarget(svc.TargetURL, targetURL.Scheme)
+	if ok && !accessAllowedByACL(r, identity, host, port, "tcp") {
+		if hasIdentity {
+			http.Error(w, "Blocked by ACL for "+identity.Username, http.StatusForbidden)
+		} else {
+			http.Error(w, "Blocked by ACL", http.StatusForbidden)
+		}
+		return
 	}
 	proxy := reverseProxyForService(svc)
 	proxy.ServeHTTP(w, r)
@@ -367,18 +382,16 @@ func handleServiceAuthCallback(w http.ResponseWriter, r *http.Request, svc Expos
 	http.Redirect(w, r, nextURL, http.StatusFound)
 }
 
-func validServiceCookie(r *http.Request, svc ExposedService) bool {
+func serviceCookieIdentity(r *http.Request, svc ExposedService) (accessIdentity, bool) {
 	cookie, err := r.Cookie(serviceCookieName(svc))
 	if err != nil {
-		return false
+		return accessIdentity{}, false
 	}
 	token, ok := decryptServiceCookie(cookie.Value)
 	if !ok || token.Service != svc.Name || token.SessionID == "" {
-		return false
+		return accessIdentity{}, false
 	}
-	var count int64
-	gdb.Model(&User{}).Where("token = ?", token.SessionID).Count(&count)
-	return count > 0
+	return identityFromSessionToken(token.SessionID)
 }
 
 func serviceCookieName(svc ExposedService) string {
@@ -538,22 +551,28 @@ func handleSocketProxy(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleHTTPAccessProxy(w http.ResponseWriter, r *http.Request) {
-	if !validHTTPProxyCredential(r) {
+	identity, ok := httpProxyCredentialIdentity(r)
+	if !ok {
 		w.Header().Set("Proxy-Authenticate", `Basic realm="uwgsocks-ui proxy"`)
 		w.Header().Set("WWW-Authenticate", `Basic realm="uwgsocks-ui proxy"`)
 		http.Error(w, "Proxy authentication required", http.StatusProxyAuthRequired)
 		return
 	}
 	if r.Method != http.MethodConnect {
-		handleHTTPAccessProxyRequest(w, r)
+		handleHTTPAccessProxyRequest(w, r, identity)
 		return
 	}
-	handleHTTPAccessProxyConnect(w, r)
+	handleHTTPAccessProxyConnect(w, r, identity)
 }
 
-func handleHTTPAccessProxyRequest(w http.ResponseWriter, r *http.Request) {
+func handleHTTPAccessProxyRequest(w http.ResponseWriter, r *http.Request, identity accessIdentity) {
 	if !r.URL.IsAbs() {
 		http.Error(w, "Expected absolute-form proxy URL", http.StatusBadRequest)
+		return
+	}
+	host, port, ok := hostPortForAccessTarget(r.URL.String(), r.URL.Scheme)
+	if !ok || !accessAllowedByACL(r, identity, host, port, "tcp") {
+		http.Error(w, "Blocked by ACL", http.StatusForbidden)
 		return
 	}
 	out := r.Clone(r.Context())
@@ -573,7 +592,7 @@ func handleHTTPAccessProxyRequest(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, resp.Body)
 }
 
-func handleHTTPAccessProxyConnect(w http.ResponseWriter, r *http.Request) {
+func handleHTTPAccessProxyConnect(w http.ResponseWriter, r *http.Request, identity accessIdentity) {
 	if r.Method != http.MethodConnect {
 		http.Error(w, "Only CONNECT is supported on /proxy", http.StatusMethodNotAllowed)
 		return
@@ -584,6 +603,11 @@ func handleHTTPAccessProxyConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	if target == "" {
 		http.Error(w, "Missing CONNECT target", http.StatusBadRequest)
+		return
+	}
+	host, port, ok := hostPortForAccessTarget(target, "https")
+	if !ok || !accessAllowedByACL(r, identity, host, port, "tcp") {
+		http.Error(w, "Blocked by ACL", http.StatusForbidden)
 		return
 	}
 	upstream := "127.0.0.1:" + getConfig("yaml_http_port")
@@ -683,27 +707,34 @@ func copyHeader(dst, src http.Header) {
 	}
 }
 
-func validHTTPProxyCredential(r *http.Request) bool {
+func httpProxyCredentialIdentity(r *http.Request) (accessIdentity, bool) {
 	header := r.Header.Get("Proxy-Authorization")
 	if header == "" {
 		header = r.Header.Get("Authorization")
 	}
 	if !strings.HasPrefix(strings.ToLower(header), "basic ") {
-		return false
+		return accessIdentity{}, false
 	}
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(header[6:]))
 	if err != nil {
-		return false
+		return accessIdentity{}, false
 	}
 	username, password, ok := strings.Cut(string(raw), ":")
 	if !ok {
-		return false
+		return accessIdentity{}, false
 	}
 	var cred AccessProxyCredential
 	if err := gdb.First(&cred, "username = ? AND enabled = ?", username, true).Error; err != nil {
-		return false
+		return accessIdentity{}, false
 	}
-	return verifyPassword(password, cred.PasswordHash)
+	if !verifyPassword(password, cred.PasswordHash) {
+		return accessIdentity{}, false
+	}
+	var user User
+	if err := gdb.First(&user, cred.UserID).Error; err != nil {
+		return accessIdentity{}, false
+	}
+	return identityForUser(user), true
 }
 
 func stripCookie(r *http.Request, name string) {

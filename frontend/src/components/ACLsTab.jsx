@@ -13,6 +13,8 @@ export default function ACLsTab() {
     list_name: 'relay',
     action: 'allow',
     src: '',
+    src_users: '',
+    src_tags: '',
     dst: '',
     proto: '',
     dport: '',
@@ -64,7 +66,7 @@ export default function ACLsTab() {
     event.preventDefault();
     try {
       await api.createACL({ ...newACL, priority: Number.parseInt(newACL.priority, 10) || 0 });
-      setNewACL({ list_name: 'relay', action: 'allow', src: '', dst: '', proto: '', dport: '', priority: 0 });
+      setNewACL({ list_name: 'relay', action: 'allow', src: '', src_users: '', src_tags: '', dst: '', proto: '', dport: '', priority: 0 });
       fetchACLs();
     } catch (err) {
       alert(err.message);
@@ -184,6 +186,14 @@ export default function ACLsTab() {
             <input className="input-field" placeholder="10.0.0.0/24" value={newACL.src} onChange={(event) => setNewACL({ ...newACL, src: event.target.value })} />
           </div>
           <div className="space-y-2">
+            <label className="field-label">Source users</label>
+            <input className="input-field" placeholder="alice, bob" value={newACL.src_users} onChange={(event) => setNewACL({ ...newACL, src_users: event.target.value })} />
+          </div>
+          <div className="space-y-2">
+            <label className="field-label">Source tags</label>
+            <input className="input-field" placeholder="admins, cameras" value={newACL.src_tags} onChange={(event) => setNewACL({ ...newACL, src_tags: event.target.value })} />
+          </div>
+          <div className="space-y-2">
             <label className="field-label">Destination</label>
             <input className="input-field" placeholder="0.0.0.0/0" value={newACL.dst} onChange={(event) => setNewACL({ ...newACL, dst: event.target.value })} />
           </div>
@@ -215,6 +225,8 @@ export default function ACLsTab() {
               <th>List</th>
               <th>Action</th>
               <th>Source</th>
+              <th>Users</th>
+              <th>Tags</th>
               <th>Destination</th>
               <th>Proto</th>
               <th>Port</th>
@@ -232,6 +244,8 @@ export default function ACLsTab() {
                   </span>
                 </td>
                 <td className="font-mono text-xs">{acl.src || '*'}</td>
+                <td className="font-mono text-xs">{acl.src_users || '*'}</td>
+                <td className="font-mono text-xs">{acl.src_tags || '*'}</td>
                 <td className="font-mono text-xs">{acl.dst || '*'}</td>
                 <td className="font-mono text-xs uppercase">{acl.proto || '*'}</td>
                 <td className="font-mono text-xs">{acl.dport || '*'}</td>
