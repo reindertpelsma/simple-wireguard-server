@@ -28,6 +28,9 @@ var publicConfigKeys = []string{
 	"public_keys_visible",
 	"server_endpoint",
 	"server_pubkey",
+	"turn_hosting_enabled",
+	"turn_allow_user_credentials",
+	"turn_max_user_credentials",
 }
 
 type clientTransportProfile struct {

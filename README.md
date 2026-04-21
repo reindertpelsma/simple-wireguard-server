@@ -41,6 +41,7 @@ Build a secure WireGuard server, relay hub, or small peer-synced mesh without Do
 - Expose a single-domain `/proxy` and `/socket` frontend for clients and tooling
 - Generate transport-aware WireGuard configs, including `#!` directives understood by `uwgsocks`
 - Optionally enable peer syncing / P2P discovery for direct paths or multi-server client distribution
+- Optionally host a managed TURN relay daemon with per-user TURN credentials and listener management from the UI
 
 ## Key Features
 
@@ -57,6 +58,7 @@ Build a secure WireGuard server, relay hub, or small peer-synced mesh without Do
 - **Transport-aware client configs:** Offer the right endpoint, `Transport = ...`, `#!URL=...`, `#!TURN=...`, or `#!Control=...` per client profile instead of one fixed bootstrap path.
 - **Peer syncing / P2P:** Optional tunnel-only control endpoint lets `uwgsocks` clients discover other peers, sync distributed clients between servers, and attempt direct UDP paths without introducing a separate control plane stack.
 - **NAT Traversal:** Built-in TURN server support for connectivity through strict firewalls/CGNAT, by hosting a small TURN server see the userspace wireguard socks project.
+- **Hosted TURN relay:** Enable a managed `turn` child process, publish TURN listeners, and let users mint their own TURN credentials from the dashboard.
 - **Secure by Default:** Argon2id hashing, encryption at rest for DB fields, and single-port HTTP/HTTPS multiplexing.
 - **Reverse Proxy Aware:** Trust configured proxy CIDRs for `X-Forwarded-For` / `X-Forwarded-Proto`, set an explicit canonical base URL, and expose optional browser access paths through `/proxy`, `/socket`, and protected service subdomains.
 - **Tag-based ACLs:** Assign policy tags to users and peers, attach extra CIDRs to tags, and write ACLs against users or tags while the daemon still receives concrete IP/CIDR rules.

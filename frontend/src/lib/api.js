@@ -228,6 +228,23 @@ export const api = {
       method: 'DELETE',
     }),
 
+  getTURNListeners: () => request('/api/admin/turn/listeners'),
+  createTURNListener: (data) =>
+    request('/api/admin/turn/listeners', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateTURNListener: (id, data) =>
+    request(`/api/admin/turn/listeners/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  deleteTURNListener: (id) =>
+    request(`/api/admin/turn/listeners/${id}`, {
+      method: 'DELETE',
+    }),
+  getTURNStatus: () => request('/api/admin/turn/status'),
+
   updateMe: (data) =>
     request('/api/me', {
       method: 'PATCH',
@@ -265,6 +282,17 @@ export const api = {
     }),
   deleteMyProxyCredential: (id) =>
     request(`/api/me/proxy-credentials/${id}`, {
+      method: 'DELETE',
+    }),
+
+  getMyTURNCredentials: () => request('/api/me/turn-credentials'),
+  createMyTURNCredential: (data) =>
+    request('/api/me/turn-credentials', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  deleteMyTURNCredential: (id) =>
+    request(`/api/me/turn-credentials/${id}`, {
       method: 'DELETE',
     }),
 

@@ -1,15 +1,19 @@
 import { useEffect, useState } from 'react';
-import { Eye, EyeOff, KeyRound, ShieldCheck, User } from 'lucide-react';
+import { Eye, EyeOff, KeyRound, RadioTower, ShieldCheck, User } from 'lucide-react';
 import { api } from '../lib/api';
 
 export default function ProfileTab() {
   const [me, setMe] = useState(null);
   const [creds, setCreds] = useState([]);
   const [createdCred, setCreatedCred] = useState(null);
+  const [turnCreds, setTurnCreds] = useState([]);
+  const [createdTurnCred, setCreatedTurnCred] = useState(null);
+  const [publicConfig, setPublicConfig] = useState({});
   const [totpSetup, setTotpSetup] = useState(null);
   const [totpCode, setTotpCode] = useState('');
   const [showQR, setShowQR] = useState(false);
   const [busy, setBusy] = useState('');
+  const [turnForm, setTurnForm] = useState({ name: 'TURN relay', wireguard_public_key: '' });
 
   const [pwForm, setPwForm] = useState({ old_password: '', password: '', confirm: '' });
   const [pwError, setPwError] = useState('');
@@ -19,9 +23,19 @@ export default function ProfileTab() {
 
   async function fetchData() {
     try {
-      const [meData, credData] = await Promise.all([api.getMe(), api.getMyProxyCredentials()]);
+      const [meData, credData, cfg] = await Promise.all([api.getMe(), api.getMyProxyCredentials(), api.getPublicConfig()]);
       setMe(meData);
       setCreds(credData);
+      setPublicConfig(cfg || {});
+      if ((cfg || {}).turn_hosting_enabled === 'true') {
+        try {
+          setTurnCreds(await api.getMyTURNCredentials());
+        } catch {
+          setTurnCreds([]);
+        }
+      } else {
+        setTurnCreds([]);
+      }
     } catch (err) {
       console.error(err);
     }
@@ -116,7 +130,32 @@ export default function ProfileTab() {
     }
   };
 
+  const handleCreateTurnCred = async () => {
+    setBusy('turn');
+    try {
+      const res = await api.createMyTURNCredential(turnForm);
+      setCreatedTurnCred(res);
+      setTurnCreds(await api.getMyTURNCredentials());
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const handleDeleteTurnCred = async (id) => {
+    if (!confirm('Delete this TURN credential?')) return;
+    try {
+      await api.deleteMyTURNCredential(id);
+      setTurnCreds(await api.getMyTURNCredentials());
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
   const isOIDC = me?.oidc_login;
+  const turnEnabled = publicConfig.turn_hosting_enabled === 'true';
+  const turnSelfService = publicConfig.turn_allow_user_credentials === 'true';
 
   if (!me) return <div className="state-shell py-24 text-[var(--muted)]">Loading…</div>;
 
@@ -298,6 +337,81 @@ export default function ProfileTab() {
           <span>{busy === 'cred' ? 'Creating…' : 'Create credential'}</span>
         </button>
       </section>
+
+      {turnEnabled && (
+        <section className="panel p-6 col-span-full">
+          <div className="mb-4 flex items-center gap-3">
+            <div className="brand-badge"><RadioTower size={18} /></div>
+            <div>
+              <span className="eyebrow">TURN access</span>
+              <h3 className="text-xl font-black tracking-tight">Hosted relay credentials</h3>
+            </div>
+          </div>
+          <p className="mb-4 text-sm text-[var(--muted)]">
+            Generate per-user TURN credentials for hosted relay listeners. These are useful for WireGuard-over-TURN and for NAT traversal workflows that need a stable relay path.
+          </p>
+
+          {createdTurnCred && (
+            <div className="mb-4 rounded-2xl border border-emerald-300 bg-emerald-50 p-4 dark:border-emerald-700 dark:bg-emerald-950">
+              <p className="mb-2 text-sm font-semibold text-emerald-800 dark:text-emerald-200">TURN credential created — save the password now, it won't be shown again.</p>
+              <p className="font-mono text-sm"><span className="text-[var(--muted)]">Username:</span> {createdTurnCred.username}</p>
+              <p className="font-mono text-sm"><span className="text-[var(--muted)]">Password:</span> {createdTurnCred.password}</p>
+              {Array.isArray(createdTurnCred.profiles) && createdTurnCred.profiles.map((profile) => (
+                <p key={profile.url} className="break-all font-mono text-xs"><span className="text-[var(--muted)]">{profile.label}:</span> {profile.url}</p>
+              ))}
+            </div>
+          )}
+
+          <div className="mb-4 space-y-2">
+            {turnCreds.map((cred) => (
+              <div key={cred.id} className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-mono text-sm font-semibold">{cred.username}</p>
+                      {cred.connected ? (
+                        <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900 dark:text-green-300">connected</span>
+                      ) : (
+                        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700 dark:bg-gray-700 dark:text-gray-300">idle</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-[var(--muted)]">{cred.name} · port {cred.port}</p>
+                    {Array.isArray(cred.profiles) && cred.profiles.length > 0 && (
+                      <div className="mt-2 space-y-1">
+                        {cred.profiles.map((profile) => (
+                          <p key={profile.url} className="break-all font-mono text-xs"><span className="text-[var(--muted)]">{profile.label}:</span> {profile.url}</p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <button type="button" onClick={() => handleDeleteTurnCred(cred.id)} className="ghost-button ghost-button-danger text-xs">Delete</button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {turnSelfService ? (
+            <div className="space-y-3 rounded-2xl border border-[var(--border)] bg-[var(--surface-soft)] p-4">
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-1.5">
+                  <label className="field-label">Credential name</label>
+                  <input className="input-field" value={turnForm.name} onChange={(event) => setTurnForm({ ...turnForm, name: event.target.value })} />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="field-label">Optional WireGuard public key</label>
+                  <input className="input-field font-mono text-sm" placeholder="leave empty to require embedded key in username" value={turnForm.wireguard_public_key} onChange={(event) => setTurnForm({ ...turnForm, wireguard_public_key: event.target.value })} />
+                </div>
+              </div>
+              <button type="button" onClick={handleCreateTurnCred} disabled={busy === 'turn'} className="primary-button">
+                <RadioTower size={15} />
+                <span>{busy === 'turn' ? 'Creating…' : 'Create TURN credential'}</span>
+              </button>
+            </div>
+          ) : (
+            <p className="text-sm text-[var(--muted)]">TURN self-service is disabled by the administrator.</p>
+          )}
+        </section>
+      )}
     </div>
   );
 }

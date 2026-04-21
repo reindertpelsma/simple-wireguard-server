@@ -110,8 +110,9 @@ export default function SettingsTab() {
 
   const directiveKeys = ['enable_client_ipv6', 'client_allowed_ips', 'client_config_tcp', 'client_config_turn_url', 'client_config_skipverifytls', 'client_config_url', 'peer_sync_mode', 'peer_sync_port'];
   const accessKeys = ['trusted_proxy_cidrs', 'web_base_url', 'http_proxy_access_enabled', 'socket_proxy_enabled', 'socket_proxy_http_port', 'exposed_services_enabled', 'service_auth_cookie_seconds'];
+  const turnKeys = ['turn_hosting_enabled', 'turn_hosting_realm', 'turn_hosting_relay_ip', 'turn_allow_user_credentials', 'turn_max_user_credentials', 'turn_user_port_start', 'turn_user_port_end'];
   const explicitKeys = ['yaml_host_forward_redirect_ip'];
-  const editableConfigEntries = Object.entries(config).filter(([key]) => !['custom_yaml', 'custom_yaml_enabled', ...directiveKeys, ...accessKeys, ...explicitKeys].includes(key));
+  const editableConfigEntries = Object.entries(config).filter(([key]) => !['custom_yaml', 'custom_yaml_enabled', ...directiveKeys, ...accessKeys, ...turnKeys, ...explicitKeys].includes(key));
 
   if (loading) {
     return <div className="state-shell py-24 text-[var(--muted)]">Loading settings…</div>;
@@ -218,6 +219,56 @@ export default function SettingsTab() {
             </div>
           </form>
 
+        </div>
+
+        <div className="mt-6 rounded-3xl border border-[var(--border)] bg-[var(--surface-soft)] p-5">
+          <div className="mb-4 flex items-center gap-3">
+            <div className="brand-badge">
+              <Network size={18} />
+            </div>
+            <div>
+              <span className="eyebrow">TURN Hosting</span>
+              <h4 className="text-xl font-black tracking-tight">Managed relay daemon</h4>
+            </div>
+          </div>
+          <form onSubmit={handleUpdate} className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <label className="field-label">TURN hosting</label>
+              <select className="input-field" value={config.turn_hosting_enabled || 'false'} onChange={(event) => setConfig({ ...config, turn_hosting_enabled: event.target.value })}>
+                <option value="false">Disabled</option>
+                <option value="true">Enabled</option>
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="field-label">User self-service</label>
+              <select className="input-field" value={config.turn_allow_user_credentials || 'false'} onChange={(event) => setConfig({ ...config, turn_allow_user_credentials: event.target.value })}>
+                <option value="false">Disabled</option>
+                <option value="true">Users can create TURN credentials</option>
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="field-label">TURN realm</label>
+              <input className="input-field" value={config.turn_hosting_realm || ''} onChange={(event) => setConfig({ ...config, turn_hosting_realm: event.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <label className="field-label">Relay IP</label>
+              <input className="input-field" placeholder="public relay IP" value={config.turn_hosting_relay_ip || ''} onChange={(event) => setConfig({ ...config, turn_hosting_relay_ip: event.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <label className="field-label">Max credentials per user</label>
+              <input className="input-field" value={config.turn_max_user_credentials || ''} onChange={(event) => setConfig({ ...config, turn_max_user_credentials: event.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <label className="field-label">User port range</label>
+              <div className="grid grid-cols-2 gap-2">
+                <input className="input-field" placeholder="start" value={config.turn_user_port_start || ''} onChange={(event) => setConfig({ ...config, turn_user_port_start: event.target.value })} />
+                <input className="input-field" placeholder="end" value={config.turn_user_port_end || ''} onChange={(event) => setConfig({ ...config, turn_user_port_end: event.target.value })} />
+              </div>
+            </div>
+            <div className="md:col-span-2">
+              <button type="submit" className="primary-button"><Save size={16} /><span>Save TURN settings</span></button>
+            </div>
+          </form>
         </div>
       </section>
 

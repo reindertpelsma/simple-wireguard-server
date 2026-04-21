@@ -85,8 +85,9 @@ func TestIntegrationManagedDaemonRuntimeAndProxy(t *testing.T) {
 	reversePort := 18091
 	stopClient := startIntegrationClientDaemon(t, daemonBin, dataDir, clientKey, peer, assignedIPv4, clientEchoPort, clientEchoTargetPort, clientLocalForwardPort, reversePort)
 	defer stopClient()
+	waitForDaemonPeerHandshake(t, clientKey.PublicKey().String())
 
-	allowStaffToClientEcho(t, assignedIPv4.String(), clientEchoPort)
+	allowStaffToTarget(t, assignedIPv4.String(), clientEchoPort)
 	assertDaemonACLContains(t, "outbound", assignedIPv4.String()+"/32", fmt.Sprint(clientEchoPort))
 	assertDaemonACLContains(t, "relay", assignedIPv4.String()+"/32", fmt.Sprint(clientEchoPort))
 
@@ -118,6 +119,7 @@ func TestIntegrationManagedDaemonRuntimeAndProxy(t *testing.T) {
 
 	ui := httptest.NewServer(wrapRootHandler(http.NewServeMux()))
 	defer ui.Close()
+	waitForProxyCONNECTReady(t, ui.URL, fmt.Sprintf("%s:%d", assignedIPv4, clientEchoPort))
 	assertProxyCONNECT(t, ui.URL, fmt.Sprintf("%s:%d", assignedIPv4, clientEchoPort), "proxied", "client:proxied\n", http.StatusOK)
 
 	gdb.Model(&ACLRule{}).Where("list_name = ?", "outbound").Update("action", "deny")
@@ -147,7 +149,11 @@ func TestIntegrationUISmokeLoginConfigAndProxy(t *testing.T) {
 	setTestConfig(t, "acl_relay_default", "deny")
 	setTestConfig(t, "yaml_l3_forwarding", "true")
 
+	if err := gdb.Create(&Group{Name: "engineering", Subnet: "100.100.8.0/24", SubnetIPv6: "fd00:100:8::/64"}).Error; err != nil {
+		t.Fatal(err)
+	}
 	user, _ := createTestUser(t, "integration-admin", true)
+	user.PrimaryGroup = "engineering"
 	user.Tags = "staff"
 	if err := gdb.Save(&user).Error; err != nil {
 		t.Fatal(err)
@@ -255,9 +261,19 @@ func TestIntegrationUISmokeLoginConfigAndProxy(t *testing.T) {
 	reversePort := 18092
 	stopClient := startIntegrationClientDaemon(t, daemonBin, dataDir, mustIntegrationKeyFromPrivate(t, privateCfg.EncryptedPrivateKey), dbPeer, assignedIPv4, clientEchoPort, clientEchoTargetPort, clientLocalForwardPort, reversePort)
 	defer stopClient()
+	waitForDaemonPeerHandshake(t, peers[0].PublicKey)
 
-	allowStaffToClientEcho(t, assignedIPv4.String(), clientEchoPort)
-	assertProxyCONNECT(t, ui.URL, fmt.Sprintf("%s:%d", assignedIPv4, clientEchoPort), "smoke", "client:smoke\n", http.StatusOK)
+	smokeForwardPort := freeIntegrationTCPPort(t)
+	createRuntimeForward(t, TunnelForward{
+		Name:   "smoke-proxy-forward",
+		Proto:  "tcp",
+		Listen: fmt.Sprintf("127.0.0.1:%d", smokeForwardPort),
+		Target: fmt.Sprintf("%s:%d", assignedIPv4, clientEchoPort),
+	})
+	allowStaffToTarget(t, assignedIPv4.String(), clientEchoPort)
+	allowStaffToTarget(t, "127.0.0.1", smokeForwardPort)
+	waitForProxyCONNECTReady(t, ui.URL, fmt.Sprintf("127.0.0.1:%d", smokeForwardPort))
+	assertProxyCONNECTStatus(t, ui.URL, fmt.Sprintf("127.0.0.1:%d", smokeForwardPort), http.StatusOK)
 }
 
 func setupIntegrationGlobals(t *testing.T, dir, daemon, apiURL, token string) {
@@ -400,6 +416,11 @@ func startIntegrationClientDaemon(t *testing.T, daemonBin, dir string, key wgtyp
 
 func allowStaffToClientEcho(t *testing.T, ip string, port int) {
 	t.Helper()
+	allowStaffToTarget(t, ip, port)
+}
+
+func allowStaffToTarget(t *testing.T, ip string, port int) {
+	t.Helper()
 	rules := []ACLRule{
 		{ListName: "outbound", Action: "allow", Dst: ip + "/32", Proto: "tcp", DPort: fmt.Sprint(port), SortOrder: 0},
 		{ListName: "outbound", Action: "allow", SrcTags: "staff", Dst: ip + "/32", Proto: "tcp", DPort: fmt.Sprint(port), SortOrder: 1},
@@ -498,6 +519,7 @@ func assertProxyCONNECT(t *testing.T, uiURL, target, msg, want string, wantStatu
 		t.Fatal(err)
 	}
 	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 	auth := base64.StdEncoding.EncodeToString([]byte("proxy-user:proxy-secret"))
 	_, _ = fmt.Fprintf(conn, "CONNECT /proxy/%s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: Basic %s\r\n\r\n", target, addr, auth)
 	br := bufio.NewReader(conn)
@@ -506,7 +528,8 @@ func assertProxyCONNECT(t *testing.T, uiURL, target, msg, want string, wantStatu
 		t.Fatal(err)
 	}
 	if resp.StatusCode != wantStatus {
-		t.Fatalf("CONNECT status = %d, want %d", resp.StatusCode, wantStatus)
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("CONNECT status = %d, want %d, body=%q", resp.StatusCode, wantStatus, body)
 	}
 	if wantStatus != http.StatusOK {
 		return
@@ -519,6 +542,56 @@ func assertProxyCONNECT(t *testing.T, uiURL, target, msg, want string, wantStatu
 	if got != want {
 		t.Fatalf("proxy echo = %q, want %q", got, want)
 	}
+}
+
+func assertProxyCONNECTStatus(t *testing.T, uiURL, target string, wantStatus int) {
+	t.Helper()
+	addr := strings.TrimPrefix(uiURL, "http://")
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	auth := base64.StdEncoding.EncodeToString([]byte("proxy-user:proxy-secret"))
+	_, _ = fmt.Fprintf(conn, "CONNECT /proxy/%s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: Basic %s\r\n\r\n", target, addr, auth)
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != wantStatus {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("CONNECT status = %d, want %d, body=%q", resp.StatusCode, wantStatus, body)
+	}
+}
+
+func waitForProxyCONNECTReady(t *testing.T, uiURL, target string) {
+	t.Helper()
+	var lastErr error
+	for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); time.Sleep(250 * time.Millisecond) {
+		addr := strings.TrimPrefix(uiURL, "http://")
+		conn, err := net.DialTimeout("tcp", addr, 1500*time.Millisecond)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		_ = conn.SetDeadline(time.Now().Add(1500 * time.Millisecond))
+		auth := base64.StdEncoding.EncodeToString([]byte("proxy-user:proxy-secret"))
+		_, _ = fmt.Fprintf(conn, "CONNECT /proxy/%s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: Basic %s\r\n\r\n", target, addr, auth)
+		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		_ = conn.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			return
+		}
+		lastErr = fmt.Errorf("status %d", resp.StatusCode)
+	}
+	t.Fatalf("proxy CONNECT to %s did not become ready: %v", target, lastErr)
 }
 
 func getJSONAs(t *testing.T, client *http.Client, rawURL string, out interface{}) {
@@ -604,6 +677,30 @@ func waitForDaemonStatus(t *testing.T) {
 		}
 	}
 	t.Fatalf("daemon API did not become ready: %v", lastErr)
+}
+
+func waitForDaemonPeerHandshake(t *testing.T, publicKey string) {
+	t.Helper()
+	var lastErr error
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
+		var status struct {
+			Peers []struct {
+				PublicKey    string `json:"public_key"`
+				HasHandshake bool   `json:"has_handshake"`
+			} `json:"peers"`
+		}
+		if code := daemonJSON(t, http.MethodGet, "/v1/status", nil, &status); code != http.StatusOK {
+			lastErr = fmt.Errorf("status %d", code)
+			continue
+		}
+		for _, peer := range status.Peers {
+			if peer.PublicKey == publicKey && peer.HasHandshake {
+				return
+			}
+		}
+		lastErr = fmt.Errorf("peer %s has no handshake yet", publicKey)
+	}
+	t.Fatalf("daemon peer handshake not ready: %v", lastErr)
 }
 
 func assertDaemonPeer(t *testing.T, publicKey string) {

@@ -52,15 +52,18 @@ var frontendFS embed.FS
 
 // --- Configuration ---
 var (
-	dbDSN         = flag.String("dsn", "wgui.db", "Database DSN")
-	dbType        = flag.String("db-type", "sqlite", "Database type: sqlite, mysql, postgres")
-	listenAddr    = flag.String("listen", "0.0.0.0:8080", "HTTP/HTTPS listen address")
-	uwgsocksURL   = flag.String("wg-url", "unix://uwgsocks.sock", "uwgsocks API URL")
-	uwgsocksToken = flag.String("wg-token", "", "uwgsocks API Token")
-	manageDaemon  = flag.Bool("manage", true, "Start and manage uwgsocks daemon")
-	daemonPath    = flag.String("daemon-path", "", "Path to uwgsocks binary (auto-detected if empty)")
-	tlsCert       = flag.String("tls-cert", "", "Path to TLS cert")
-	tlsKey        = flag.String("tls-key", "", "Path to TLS key")
+	dbDSN          = flag.String("dsn", "wgui.db", "Database DSN")
+	dbType         = flag.String("db-type", "sqlite", "Database type: sqlite, mysql, postgres")
+	listenAddr     = flag.String("listen", "0.0.0.0:8080", "HTTP/HTTPS listen address")
+	uwgsocksURL    = flag.String("wg-url", "unix://uwgsocks.sock", "uwgsocks API URL")
+	uwgsocksToken  = flag.String("wg-token", "", "uwgsocks API Token")
+	manageDaemon   = flag.Bool("manage", true, "Start and manage uwgsocks daemon")
+	daemonPath     = flag.String("daemon-path", "", "Path to uwgsocks binary (auto-detected if empty)")
+	turnDaemonPath = flag.String("turn-daemon-path", "", "Path to turn binary (auto-detected if empty)")
+	turnAPIURL     = flag.String("turn-api-url", "unix://turn.sock", "Managed TURN API URL")
+	turnAPIToken   = flag.String("turn-api-token", "", "Managed TURN API bearer token")
+	tlsCert        = flag.String("tls-cert", "", "Path to TLS cert")
+	tlsKey         = flag.String("tls-key", "", "Path to TLS key")
 
 	// TURN settings from CLI
 	turnServer             = flag.String("turn-server", "", "TURN server (host:port)")
@@ -500,6 +503,7 @@ func main() {
 		}
 		log.Printf("Unix sockets unavailable; daemon API on %s (token set)", *uwgsocksURL)
 	}
+	normalizeManagedTURNAPIURL()
 
 	if *extractDist != "" {
 		if err := extractEmbeddedDist(*extractDist); err != nil {
@@ -557,6 +561,7 @@ func main() {
 	}
 
 	*daemonPath = findDaemon(*systemMode)
+	*turnDaemonPath = findTurnDaemon()
 
 	if *manageDaemon {
 		// Set MTU if not manually overridden in DB already
@@ -567,6 +572,10 @@ func main() {
 
 		generateCanonicalYAML()
 		startDaemon()
+		generateTurnCanonicalYAML()
+		if err := startManagedTURNDaemon(); err != nil {
+			log.Printf("Failed to start managed TURN daemon: %v", err)
+		}
 	}
 
 	time.Sleep(1 * time.Second)
@@ -601,6 +610,9 @@ func main() {
 	mux.HandleFunc("GET /api/me/proxy-credentials", authMiddleware(handleGetMyProxyCredentials))
 	mux.HandleFunc("POST /api/me/proxy-credentials", authMiddleware(handleCreateMyProxyCredential))
 	mux.HandleFunc("DELETE /api/me/proxy-credentials/{id}", authMiddleware(handleDeleteMyProxyCredential))
+	mux.HandleFunc("GET /api/me/turn-credentials", authMiddleware(handleGetMyTURNCredentials))
+	mux.HandleFunc("POST /api/me/turn-credentials", authMiddleware(handleCreateMyTURNCredential))
+	mux.HandleFunc("DELETE /api/me/turn-credentials/{id}", authMiddleware(handleDeleteMyTURNCredential))
 	mux.HandleFunc("GET /api/oidc/login", handleOIDCLogin)
 	mux.HandleFunc("GET /api/oidc/callback", handleOIDCCallback)
 	mux.HandleFunc("GET /api/share/{token}", handleGetSharedConfig)
@@ -645,6 +657,7 @@ func main() {
 	mux.HandleFunc("POST /api/admin/transports", authMiddleware(adminMiddleware(handleCreateTransport)))
 	mux.HandleFunc("PATCH /api/admin/transports/{id}", authMiddleware(adminMiddleware(handleUpdateTransport)))
 	mux.HandleFunc("DELETE /api/admin/transports/{id}", authMiddleware(adminMiddleware(handleDeleteTransport)))
+	registerTURNRoutes(mux)
 
 	// Admin - Config
 	mux.HandleFunc("GET /api/admin/config", authMiddleware(adminMiddleware(handleGetAdminConfig)))
@@ -691,7 +704,7 @@ func initDB() {
 	}
 
 	// Auto Migration
-	err = gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{}, &AccessProxyCredential{}, &ExposedService{}, &Group{}, &TunnelForward{})
+	err = gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{}, &AccessProxyCredential{}, &ExposedService{}, &Group{}, &TunnelForward{}, &TURNHostedListener{}, &TURNCredential{})
 
 	if err != nil {
 		log.Fatalf("Failed to migrate database: %v", err)
@@ -873,6 +886,13 @@ func initGlobalSettings() {
 		"socket_proxy_http_port":      strconv.Itoa(findFreePort()),
 		"exposed_services_enabled":    "true",
 		"service_auth_cookie_seconds": strconv.Itoa(int((12 * time.Hour).Seconds())),
+		"turn_hosting_enabled":        "false",
+		"turn_hosting_realm":          "open-relay.local",
+		"turn_hosting_relay_ip":       "",
+		"turn_allow_user_credentials": "false",
+		"turn_max_user_credentials":   "3",
+		"turn_user_port_start":        "40000",
+		"turn_user_port_end":          "49999",
 	}
 
 	if ep := os.Getenv("WG_PUBLIC_ENDPOINT"); ep != "" {
@@ -1644,11 +1664,19 @@ func uwgRequestWithContext(ctx context.Context, method, path string, body io.Rea
 func handleUpdateGlobalConfig(w http.ResponseWriter, r *http.Request) {
 	var req map[string]string
 	json.NewDecoder(r.Body).Decode(&req)
+	turnChanged := false
 	for k, v := range req {
 		gdb.Model(&GlobalConfig{}).Where("key = ?", k).Update("value", v)
+		if strings.HasPrefix(k, "turn_") {
+			turnChanged = true
+		}
 	}
 	generateCanonicalYAML()
+	generateTurnCanonicalYAML()
 	pushACLsToDaemon()
+	if turnChanged {
+		go restartManagedTURNDaemonIfEnabled()
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
