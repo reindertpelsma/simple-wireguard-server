@@ -11,6 +11,7 @@ const EMPTY_FORM = {
   listen: false,
   listen_port: '',
   listen_addrs: '',
+  external_endpoint: '',
   url: '',
   ws_path: '',
   connect_host: '',
@@ -127,6 +128,7 @@ export default function TransportsTab() {
       listen: t.listen ?? false,
       listen_port: t.listen_port ? String(t.listen_port) : '',
       listen_addrs: t.listen_addrs ?? '',
+      external_endpoint: t.external_endpoint ?? '',
       url: t.url ?? '',
       ws_path: t.ws_path ?? '',
       connect_host: t.connect_host ?? '',
@@ -239,6 +241,16 @@ export default function TransportsTab() {
               </label>
             </div>
           )}
+
+          <label className={LABEL}>
+            Client Endpoint / URL
+            <input
+              className={INPUT}
+              value={form.external_endpoint}
+              onChange={(e) => set('external_endpoint', e.target.value)}
+              placeholder={needsTurn(form.base) ? 'turn+udp://user:pass@turn.example.com:3478' : needsWebSocket(form.base) || form.base === 'url' ? 'https://vpn.example.com/wg' : 'vpn.example.com:51820'}
+            />
+          </label>
 
           {/* URL for base=url */}
           {form.base === 'url' && (
@@ -421,6 +433,7 @@ export default function TransportsTab() {
               {expanded[t.id] && (
                 <dl className="grid grid-cols-2 gap-x-4 gap-y-1 border-t border-gray-100 px-4 py-3 text-xs dark:border-gray-700 sm:grid-cols-3">
                   {t.listen_addrs && <><dt className="text-gray-500 dark:text-gray-400">Addresses</dt><dd className="text-gray-800 dark:text-gray-200 col-span-2">{t.listen_addrs}</dd></>}
+                  {t.external_endpoint && <><dt className="text-gray-500 dark:text-gray-400">Client Endpoint</dt><dd className="text-gray-800 dark:text-gray-200 col-span-2">{t.external_endpoint}</dd></>}
                   {t.url && <><dt className="text-gray-500 dark:text-gray-400">URL</dt><dd className="text-gray-800 dark:text-gray-200 col-span-2">{t.url}</dd></>}
                   {t.ws_path && <><dt className="text-gray-500 dark:text-gray-400">Path</dt><dd className="text-gray-800 dark:text-gray-200">{t.ws_path}</dd></>}
                   {t.connect_host && <><dt className="text-gray-500 dark:text-gray-400">Connect Host</dt><dd className="text-gray-800 dark:text-gray-200">{t.connect_host}</dd></>}

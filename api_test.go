@@ -138,6 +138,42 @@ func TestBuildClientConfigTextAddsControlDirectiveForPeerSyncPeer(t *testing.T) 
 	}
 }
 
+func TestBuildClientTransportProfilesIncludesPreferredAndSocket(t *testing.T) {
+	setupTestDB(t)
+	setTestConfig(t, "socket_proxy_enabled", "true")
+	setTestConfig(t, "server_endpoint", "vpn.example.com:51820")
+	setTestConfig(t, "default_transport", "web")
+	if err := gdb.Create(&TransportConfig{
+		Name:             "udp",
+		Base:             "udp",
+		Listen:           true,
+		ListenPort:       51820,
+		ExternalEndpoint: "vpn.example.com:51820",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&TransportConfig{
+		Name:             "web",
+		Base:             "https",
+		Listen:           true,
+		ExternalEndpoint: "https://ui.example.com/socket",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	profiles := buildClientTransportProfiles("https://ui.example.com")
+	if len(profiles) < 3 {
+		t.Fatalf("profiles len=%d want at least 3: %+v", len(profiles), profiles)
+	}
+	if profiles[1].Name != "web" || !profiles[1].Preferred || profiles[1].DirectiveURL != "https://ui.example.com/socket" {
+		t.Fatalf("unexpected preferred web profile: %+v", profiles[1])
+	}
+	last := profiles[len(profiles)-1]
+	if last.Name != "ui-socket-http" || last.DirectiveURL != "https://ui.example.com/socket" {
+		t.Fatalf("unexpected socket profile: %+v", last)
+	}
+}
+
 func TestAdvanceBySubnetIPv4UsesPrefixBlockSize(t *testing.T) {
 	start := netip.MustParseAddr("100.100.0.0")
 	if got := advanceBySubnet(start, 22); got.String() != "100.100.4.0" {

@@ -270,16 +270,17 @@ type TunnelForward struct {
 // TransportConfig stores a pluggable transport entry managed via the UI.
 // The JSON fields mirror transport.Config so the UI can read/write them.
 type TransportConfig struct {
-	ID          uint   `gorm:"primaryKey" json:"id"`
-	Name        string `gorm:"uniqueIndex;not null" json:"name"`
-	Base        string `gorm:"not null" json:"base"`                   // udp|tcp|tls|dtls|http|https|quic|quic-ws|url
-	Listen      bool   `gorm:"default:false" json:"listen"`            // enable listener
-	ListenPort  int    `gorm:"default:0" json:"listen_port,omitempty"` // 0 = use wireguard.listen_port
-	ListenAddrs string `json:"listen_addrs,omitempty"`                 // comma-separated IPs, empty = all
-	URL         string `json:"url,omitempty"`                          // for base=url
-	WSPath      string `json:"ws_path,omitempty"`
-	ConnectHost string `json:"connect_host,omitempty"`
-	HostHeader  string `json:"host_header,omitempty"`
+	ID               uint   `gorm:"primaryKey" json:"id"`
+	Name             string `gorm:"uniqueIndex;not null" json:"name"`
+	Base             string `gorm:"not null" json:"base"`                   // udp|tcp|tls|dtls|http|https|quic|quic-ws|url
+	Listen           bool   `gorm:"default:false" json:"listen"`            // enable listener
+	ListenPort       int    `gorm:"default:0" json:"listen_port,omitempty"` // 0 = use wireguard.listen_port
+	ListenAddrs      string `json:"listen_addrs,omitempty"`                 // comma-separated IPs, empty = all
+	ExternalEndpoint string `json:"external_endpoint,omitempty"`            // advertised client endpoint or URL
+	URL              string `json:"url,omitempty"`                          // for base=url
+	WSPath           string `json:"ws_path,omitempty"`
+	ConnectHost      string `json:"connect_host,omitempty"`
+	HostHeader       string `json:"host_header,omitempty"`
 	// TURN base transport settings
 	TurnServer             string `json:"turn_server,omitempty"`
 	TurnUsername           string `json:"turn_username,omitempty"`

@@ -5,10 +5,33 @@ import { api } from '../lib/api';
 import { decryptPrivateKey, hashNonce } from '../lib/crypto';
 import { buildWireGuardConfig, downloadConfigFile, stripWGDirectives } from '../lib/config';
 
+function parseTransportProfiles(globalConfig) {
+  let profiles = [];
+  try {
+    profiles = JSON.parse(globalConfig.client_transport_profiles || '[]');
+  } catch {
+    profiles = [];
+  }
+  if (globalConfig.socket_proxy_enabled === 'true') {
+    const socketURL = `${window.location.origin}/socket`;
+    profiles = profiles.concat([{
+      name: 'ui-socket-http',
+      label: 'Single-domain /socket',
+      base: 'http',
+      endpoint: new URL(socketURL).host,
+      directive_url: socketURL,
+      preferred: false,
+    }]);
+  }
+  return profiles;
+}
+
 export default function ConfigModal({ peer, onClose }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [config, setConfig] = useState('');
+  const [transportProfiles, setTransportProfiles] = useState([]);
+  const [selectedTransport, setSelectedTransport] = useState('');
   const [copied, setCopied] = useState(false);
   const [simpleView, setSimpleView] = useState(false);
 
@@ -28,6 +51,8 @@ export default function ConfigModal({ peer, onClose }) {
           api.getPublicConfig(),
           api.getDistributePeers().catch(() => []),
         ]);
+        const profiles = parseTransportProfiles(globalConfig);
+        const preferredProfile = profiles.find((profile) => profile.preferred) || profiles[0] || null;
         let privateKey = '';
         let presharedKey = '';
         let assignedIPs = peer.assigned_ips;
@@ -62,8 +87,9 @@ export default function ConfigModal({ peer, onClose }) {
           dns: globalConfig.client_dns,
           mtu: globalConfig.global_mtu,
           serverPublicKey: globalConfig.server_pubkey,
-          endpoint: globalConfig.endpoints_visible === 'false' && !peer.is_owner ? 'HIDDEN' : globalConfig.server_endpoint,
-          transport: globalConfig.default_transport,
+          endpoint: globalConfig.endpoints_visible === 'false' && !peer.is_owner ? 'HIDDEN' : (preferredProfile?.endpoint || globalConfig.server_endpoint),
+          transport: preferredProfile?.transport || globalConfig.default_transport,
+          transportProfile: preferredProfile,
           presharedKey,
           keepalive: peer.keepalive,
           enableIPv6: globalConfig.enable_client_ipv6,
@@ -78,6 +104,8 @@ export default function ConfigModal({ peer, onClose }) {
         });
 
         if (!cancelled) {
+          setTransportProfiles(profiles);
+          setSelectedTransport(preferredProfile?.name || '');
           setConfig(configText);
         }
       } catch (err) {
@@ -96,6 +124,73 @@ export default function ConfigModal({ peer, onClose }) {
       cancelled = true;
     };
   }, [peer]);
+
+  const rebuildForTransport = async (transportName) => {
+    setLoading(true);
+    setError('');
+    try {
+      const [globalConfig, distributePeers] = await Promise.all([
+        api.getPublicConfig(),
+        api.getDistributePeers().catch(() => []),
+      ]);
+      const profiles = parseTransportProfiles(globalConfig);
+      const chosenProfile = profiles.find((profile) => profile.name === transportName) || profiles.find((profile) => profile.preferred) || profiles[0] || null;
+
+      let privateKey = '';
+      let presharedKey = '';
+      let assignedIPs = peer.assigned_ips;
+      if (peer.is_e2e) {
+        const nonce = localStorage.getItem(`nonce_${peer.public_key}`);
+        if (!nonce) {
+          throw new Error('This browser does not have the local nonce needed to decrypt this config.');
+        }
+        const nonceHash = await hashNonce(nonce);
+        const privateData = await api.getPeerPrivate(peer.id, nonceHash);
+        try {
+          privateKey = await decryptPrivateKey(privateData.encrypted_private_key, nonce);
+        } catch {
+          const aesKey = await api.getHMACNonce(nonce);
+          privateKey = await decryptPrivateKey(privateData.encrypted_private_key, nonce, aesKey);
+        }
+        presharedKey = privateData.preshared_key;
+        assignedIPs = privateData.assigned_ips;
+      } else {
+        const privateData = await api.getPeerPrivate(peer.id);
+        privateKey = privateData.encrypted_private_key;
+        presharedKey = privateData.preshared_key;
+        assignedIPs = privateData.assigned_ips;
+      }
+
+      const myDistributePeers = distributePeers.filter((dp) => dp.public_key !== peer.public_key);
+      setTransportProfiles(profiles);
+      setSelectedTransport(chosenProfile?.name || '');
+      setConfig(buildWireGuardConfig({
+        privateKey,
+        assignedIPs,
+        dns: globalConfig.client_dns,
+        mtu: globalConfig.global_mtu,
+        serverPublicKey: globalConfig.server_pubkey,
+        endpoint: globalConfig.endpoints_visible === 'false' && !peer.is_owner ? 'HIDDEN' : (chosenProfile?.endpoint || globalConfig.server_endpoint),
+        transport: chosenProfile?.transport || globalConfig.default_transport,
+        transportProfile: chosenProfile,
+        presharedKey,
+        keepalive: peer.keepalive,
+        enableIPv6: globalConfig.enable_client_ipv6,
+        allowedIPs: globalConfig.client_allowed_ips,
+        directiveTCP: globalConfig.client_config_tcp,
+        directiveTURN: globalConfig.client_config_turn_url,
+        directiveSkipVerifyTLS: globalConfig.client_config_skipverifytls,
+        directiveURL: globalConfig.client_config_url,
+        directiveControl: globalConfig.client_config_control_url,
+        peerSyncEnabled: !!peer.peer_sync_enabled || globalConfig.peer_sync_mode === 'enabled',
+        distributePeers: myDistributePeers,
+      }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const copyToClipboard = async () => {
     await navigator.clipboard.writeText(simpleView ? stripWGDirectives(config) : config);
@@ -156,6 +251,16 @@ export default function ConfigModal({ peer, onClose }) {
                   </div>
 
                   <div className="flex flex-wrap gap-2">
+                    {transportProfiles.length > 1 && (
+                      <label className="ghost-button gap-2">
+                        <span>Transport</span>
+                        <select value={selectedTransport} onChange={(event) => rebuildForTransport(event.target.value)}>
+                          {transportProfiles.map((profile) => (
+                            <option key={profile.name} value={profile.name}>{profile.label}</option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
                     {hasDirectiveLines && (
                       <label className="ghost-button gap-2">
                         <input type="checkbox" checked={simpleView} onChange={(event) => setSimpleView(event.target.checked)} />
