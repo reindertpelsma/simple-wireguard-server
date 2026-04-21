@@ -3,6 +3,7 @@ uwgkm
 uwgsocks
 uwgsocks.exe
 uwgsocks-ui
+turn-canoncial.yaml
 dist/
 frontend/dist
 frontend/node_modules
