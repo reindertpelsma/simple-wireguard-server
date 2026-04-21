@@ -7,18 +7,12 @@ Build a secure WireGuard server, relay hub, or small peer-synced mesh without Do
 ## Quick Start (20 Seconds)
 
 1. **Build or download:**
-   Download:
-   ```bash
-   wget https://github.com/reindertpelsma/simple-wireguard-server/releases/download/0.1/uwgsocks-ui
-   wget https://github.com/reindertpelsma/userspace-wireguard-socks/releases/download/0.2/uwgsocks
-   wget https://github.com/reindertpelsma/simple-wireguard-server/releases/download/0.1/uwgkm #If you want to use Kernel Wireguard, requires root
-   chmod +x uwgsocks-ui uwgsocks uwgkm
-   ```
-
-   Or compile from source. Ensure you clone [https://github.com/reindertpelsma/userspace-wireguard-socks](https://github.com/reindertpelsma/userspace-wireguard-socks)
+   Compile from source. Ensure you clone [https://github.com/reindertpelsma/userspace-wireguard-socks](https://github.com/reindertpelsma/userspace-wireguard-socks)
    ```bash
    ./compile.sh
    ```
+
+   Or see the release pages on both userspace-wireguard-socks and this repository, ensure you have at least uwgsocks and uwgsocks-ui binaries
 3. **Run (Default SQLite + Auto-discovery):**
    ```bash
    ./uwgsocks-ui -listen 0.0.0.0:8080
