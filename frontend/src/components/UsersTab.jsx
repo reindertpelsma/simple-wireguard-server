@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { KeyRound, Network, Shield, ShieldCheck, ShieldOff, Trash2, UserPlus } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { KeyRound, Network, Search, Shield, ShieldCheck, ShieldOff, Trash2, UserPlus } from 'lucide-react';
 import { api } from '../lib/api';
 
 function UserPasswordForm({ user, onDone }) {
@@ -39,6 +39,7 @@ export default function UsersTab() {
   const [newUser, setNewUser] = useState({ username: '', password: '', groups: '', primary_group: 'default' });
   const [newGroup, setNewGroup] = useState({ name: '', parent_groups: '', extra_cidrs: '', subnet: '' });
   const [passwordEditId, setPasswordEditId] = useState(null);
+  const [search, setSearch] = useState('');
 
   async function fetchData() {
     try {
@@ -153,6 +154,15 @@ export default function UsersTab() {
   };
 
   const primaryCapableGroups = groups.filter(g => g.subnet);
+  const filteredUsers = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return users;
+    return users.filter((user) => [
+      user.username,
+      user.primary_group,
+      user.groups,
+    ].filter(Boolean).join(' ').toLowerCase().includes(query));
+  }, [users, search]);
 
   return (
     <div className="space-y-6">
@@ -261,6 +271,26 @@ export default function UsersTab() {
         </div>
       </section>
 
+      <section className="panel p-5 sm:p-6">
+        <div className="peer-toolbar">
+          <div>
+            <span className="eyebrow">User Directory</span>
+            <h3 className="mt-2 text-2xl font-black tracking-tight">Search accounts and manage access</h3>
+            <p className="mt-2 text-sm text-[var(--muted)]">{filteredUsers.length} result{filteredUsers.length === 1 ? '' : 's'}</p>
+          </div>
+          <label className="peer-search">
+            <Search size={16} />
+            <input
+              type="search"
+              className="input-field"
+              placeholder="Search username or groups"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </label>
+        </div>
+      </section>
+
       <section className="table-shell">
         <table>
           <thead>
@@ -274,7 +304,7 @@ export default function UsersTab() {
             </tr>
           </thead>
           <tbody>
-            {users.map((user) => (
+            {filteredUsers.map((user) => (
               <tr key={user.id}>
                 <td className="font-semibold">{user.username}</td>
                 <td>

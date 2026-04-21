@@ -163,8 +163,9 @@ const loginPageHTML = `<!doctype html>
   <title>Sign in · uwgsocks-ui</title>
   <style>
     :root { color-scheme: light; --bg:#edf3ea; --ink:#10222d; --muted:#5e7480; --panel:rgba(255,255,255,.86); --line:rgba(16,34,45,.14); --accent:#0f766e; --accent2:#d97706; --danger:#c2410c; }
+    :root[data-theme="dark"] { color-scheme: dark; --bg:#07131a; --ink:#e6f3f2; --muted:#90a9b2; --panel:rgba(10,23,31,.9); --line:rgba(230,243,242,.12); --accent:#5eead4; --accent2:#fb923c; --danger:#fb923c; }
     * { box-sizing:border-box; }
-    body { min-height:100vh; margin:0; display:grid; place-items:center; padding:24px; color:var(--ink); font-family:"Space Grotesk","Avenir Next","Segoe UI",sans-serif; background:radial-gradient(circle at 10% 10%,rgba(15,118,110,.18),transparent 30%),radial-gradient(circle at 90% 0,rgba(217,119,6,.16),transparent 26%),linear-gradient(180deg,#fff,var(--bg)); }
+    body { min-height:100vh; margin:0; display:grid; place-items:center; padding:24px; color:var(--ink); font-family:"Space Grotesk","Avenir Next","Segoe UI",sans-serif; background:radial-gradient(circle at 10% 10%,rgba(15,118,110,.18),transparent 30%),radial-gradient(circle at 90% 0,rgba(217,119,6,.16),transparent 26%),linear-gradient(180deg,var(--panel),var(--bg)); }
     main { width:min(100%,960px); display:grid; gap:20px; grid-template-columns:1.05fr .95fr; align-items:stretch; }
     section { border:1px solid var(--line); border-radius:30px; background:var(--panel); box-shadow:0 24px 70px rgba(16,34,45,.13); backdrop-filter:blur(18px); }
     .hero { padding:34px; display:flex; flex-direction:column; justify-content:space-between; gap:30px; }
@@ -183,6 +184,9 @@ const loginPageHTML = `<!doctype html>
     button:disabled { opacity:.6; cursor:wait; }
     .error { display:none; border:1px solid rgba(194,65,12,.28); background:rgba(194,65,12,.1); color:var(--danger); border-radius:18px; padding:12px 14px; }
     .error.show { display:block; }
+    .topbar { position:fixed; top:20px; right:20px; display:flex; gap:12px; align-items:center; }
+    .theme { border:1px solid var(--line); border-radius:999px; background:transparent; color:var(--ink); }
+    .powered { display:inline-flex; margin-top:18px; color:var(--accent); font-weight:700; text-decoration:none; }
     .tiles { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
     .tile { border:1px solid var(--line); border-radius:20px; padding:14px; background:rgba(255,255,255,.62); font-weight:800; }
     .twofa { display:none; }
@@ -191,6 +195,9 @@ const loginPageHTML = `<!doctype html>
   </style>
 </head>
 <body>
+  <div class="topbar">
+    <button id="theme-toggle" type="button" class="theme">Toggle theme</button>
+  </div>
   <main>
     <section class="card">
       <span class="eyebrow">Operator Login</span>
@@ -204,10 +211,21 @@ const loginPageHTML = `<!doctype html>
         <div id="error" class="error"></div>
         <button id="submit" type="submit">Enter dashboard</button>
         <a id="oidc" class="button secondary" href="/api/oidc/login" style="display:none">Continue with OIDC</a>
+        <a class="powered" href="https://github.com/reindertpelsma/simple-wireguard-server" target="_blank" rel="noreferrer">Powered by simple-wireguard-server</a>
       </form>
     </section>
   </main>
   <script>
+    const root = document.documentElement;
+    const storedTheme = localStorage.getItem('theme');
+    if (storedTheme === 'dark' || storedTheme === 'light') {
+      root.dataset.theme = storedTheme;
+    }
+    document.getElementById('theme-toggle').addEventListener('click', () => {
+      const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+      root.dataset.theme = next;
+      localStorage.setItem('theme', next);
+    });
     const form = document.getElementById('login-form');
     const errorBox = document.getElementById('error');
     const submit = document.getElementById('submit');

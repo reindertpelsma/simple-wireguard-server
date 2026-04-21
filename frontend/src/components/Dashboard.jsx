@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeftRight, LogOut, Plus, Radio, RadioTower, Settings, ShieldAlert, Smartphone, User, Users } from 'lucide-react';
+import { ArrowLeftRight, LogOut, Menu, Plus, Radio, RadioTower, Settings, ShieldAlert, Smartphone, User, Users, X } from 'lucide-react';
 import { api } from '../lib/api';
 import AddPeerModal from './AddPeerModal';
 import ConfigModal from './ConfigModal';
@@ -30,6 +30,7 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedPeer, setSelectedPeer] = useState(null);
   const [currentUsername, setCurrentUsername] = useState('');
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
     async function checkAdmin() {
@@ -55,6 +56,7 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
   }, []);
 
   const visibleTabs = tabs.filter((tab) => isAdmin || !tab.adminOnly);
+  const activeTabMeta = visibleTabs.find((tab) => tab.id === activeTab) || visibleTabs[0];
 
   const handleLogout = async () => {
     try {
@@ -83,6 +85,15 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
               <ThemeToggle theme={theme} onToggle={onToggleTheme} />
               <button
                 type="button"
+                onClick={() => setMobileNavOpen((open) => !open)}
+                className="ghost-button mobile-nav-toggle"
+                aria-label="Toggle navigation"
+              >
+                {mobileNavOpen ? <X size={18} /> : <Menu size={18} />}
+                <span>Menu</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => setIsAddModalOpen(true)}
                 className="primary-button"
               >
@@ -101,19 +112,49 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
             </div>
           </div>
 
-          <div className="tab-strip">
+          <div className="mobile-nav-summary">
+            <span className="text-sm font-semibold text-[var(--muted)]">Current section</span>
+            <span className="status-chip status-chip-muted">{activeTabMeta?.label || activeTab}</span>
+          </div>
+
+          {mobileNavOpen && (
+            <div className="mobile-nav-panel">
+              {visibleTabs.map((tab) => {
+                const TabIcon = tab.icon;
+
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => {
+                      setActiveTab(tab.id);
+                      setMobileNavOpen(false);
+                    }}
+                    className={`tab-pill ${activeTab === tab.id ? 'tab-pill-active' : ''}`}
+                  >
+                    <TabIcon size={16} />
+                    <span>{tab.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="tab-strip desktop-tab-strip">
             {visibleTabs.map((tab) => {
               const TabIcon = tab.icon;
 
-              return <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-                className={`tab-pill ${activeTab === tab.id ? 'tab-pill-active' : ''}`}
-              >
-                <TabIcon size={16} />
-                <span>{tab.label}</span>
-              </button>
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`tab-pill ${activeTab === tab.id ? 'tab-pill-active' : ''}`}
+                >
+                  <TabIcon size={16} />
+                  <span>{tab.label}</span>
+                </button>
+              );
             })}
           </div>
         </div>
@@ -129,6 +170,10 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
         {activeTab === 'users'      && <UsersTab />}
         {activeTab === 'settings'   && <SettingsTab />}
       </main>
+
+      <footer className="px-4 pb-10 text-center text-sm text-[var(--muted)] sm:px-6 lg:px-8">
+        Powered by <a className="font-semibold text-[var(--accent)] underline-offset-4 hover:underline" href="https://github.com/reindertpelsma/simple-wireguard-server" target="_blank" rel="noreferrer">simple-wireguard-server</a>
+      </footer>
 
       <button
         type="button"

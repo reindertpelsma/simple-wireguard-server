@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
+  ChevronDown,
+  ChevronUp,
   Copy,
   Edit3,
   Globe,
@@ -10,6 +12,7 @@ import {
   Power,
   PowerOff,
   QrCode,
+  Search,
   Share2,
   Smartphone,
   Trash2,
@@ -76,17 +79,17 @@ function BandwidthInput({ initialValue, onChange }) {
   };
 
   return (
-    <div className="flex gap-1">
+    <div className="bandwidth-input">
       <input
         type="number"
         min="0"
         step="any"
         placeholder="0 = unlimited"
-        className="input-field min-w-0 flex-1"
+        className="input-field min-w-0"
         value={displayValue}
         onChange={handleValueChange}
       />
-      <select className="input-field w-[6.5rem] px-2" value={unit} onChange={handleUnitChange}>
+      <select className="input-field bandwidth-input-unit px-2" value={unit} onChange={handleUnitChange}>
         {BANDWIDTH_UNITS.map((u) => (
           <option key={u.label} value={u.label}>{u.label}</option>
         ))}
@@ -393,6 +396,11 @@ export default function PeersTab({ isAdmin, currentUsername, onSelectPeer }) {
   const [pinging, setPinging] = useState(null);
   const [editingPeer, setEditingPeer] = useState(null);
   const [sharingPeer, setSharingPeer] = useState(null);
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [expandedPeers, setExpandedPeers] = useState({});
+
+  const pageSize = 25;
 
   useEffect(() => {
     fetchPeers();
@@ -456,8 +464,35 @@ export default function PeersTab({ isAdmin, currentUsername, onSelectPeer }) {
     }
   };
 
+  const filteredPeers = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return peers;
+    return peers.filter((peer) => {
+      const haystack = [
+        peer.name,
+        peer.username,
+        peer.assigned_ips,
+        peer.public_key,
+        peer.static_endpoint,
+        peer.endpoint_ip,
+        peer.transport_name,
+        peer.transport_endpoint,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [peers, search]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredPeers.length / pageSize));
+  const pagedPeers = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredPeers.slice(start, start + pageSize);
+  }, [filteredPeers, page]);
+
   const groups = useMemo(() => {
-    const map = peers.reduce((accumulator, peer) => {
+    const map = pagedPeers.reduce((accumulator, peer) => {
       const group = peer.username || 'Unknown';
       if (!accumulator[group]) accumulator[group] = [];
       accumulator[group].push(peer);
@@ -470,7 +505,21 @@ export default function PeersTab({ isAdmin, currentUsername, onSelectPeer }) {
       return a.localeCompare(b);
     });
     return entries;
-  }, [peers, currentUsername]);
+  }, [pagedPeers, currentUsername]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
+  const toggleExpanded = (peerId) => {
+    setExpandedPeers((current) => ({ ...current, [peerId]: !current[peerId] }));
+  };
 
   if (loading) {
     return (
@@ -482,7 +531,30 @@ export default function PeersTab({ isAdmin, currentUsername, onSelectPeer }) {
   }
 
   return (
-    <div className="space-y-10">
+    <div className="space-y-8">
+      <section className="panel p-5 sm:p-6">
+        <div className="peer-toolbar">
+          <div>
+            <span className="eyebrow">Device Inventory</span>
+            <h3 className="mt-2 text-2xl font-black tracking-tight">Search, filter, and inspect peer configs</h3>
+            <p className="mt-2 text-sm text-[var(--muted)]">
+              {filteredPeers.length} result{filteredPeers.length === 1 ? '' : 's'}
+              {filteredPeers.length !== peers.length ? ` of ${peers.length}` : ''} · page {page} of {totalPages}
+            </p>
+          </div>
+          <label className="peer-search">
+            <Search size={16} />
+            <input
+              type="search"
+              className="input-field"
+              placeholder="Search owner, device, IP, public key, or config endpoint"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </label>
+        </div>
+      </section>
+
       {groups.map(([username, userPeers]) => (
         <section key={username} className="space-y-4">
           <div className="flex items-center gap-3 px-1">
@@ -495,57 +567,50 @@ export default function PeersTab({ isAdmin, currentUsername, onSelectPeer }) {
             </div>
           </div>
 
-          <div className="grid gap-4">
+          <div className="peer-list">
             {userPeers.map((peer) => {
               const hasNonce = !!localStorage.getItem(`nonce_${peer.public_key}`);
               const canRevealConfig = peer.has_private_key_material && (!peer.is_e2e || hasNonce);
               const canShareConfig = canRevealConfig;
               const hasShaper = (peer.traffic_upload_bps || 0) > 0 || (peer.traffic_download_bps || 0) > 0 || (peer.traffic_latency_ms || 0) > 0;
               const hasTransportDetails = !!(peer.transport_name || peer.transport_state || peer.transport_endpoint || peer.transport_source_addr || peer.transport_carrier_remote_addr);
+              const isExpanded = !!expandedPeers[peer.id];
 
               const canManage = peer.is_owner || isAdmin;
 
               return (
                 <article key={peer.id} className={`peer-card ${peer.enabled ? '' : 'peer-card-disabled'}`}>
-                  <div className="flex flex-col gap-6">
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                      <div className="flex gap-4">
+                  <div className="flex flex-col gap-5">
+                    <div className="peer-row">
+                      <button type="button" className="peer-row-summary" onClick={() => toggleExpanded(peer.id)} aria-expanded={isExpanded}>
                         <div className="peer-icon">
-                          <Smartphone size={24} />
+                          <Smartphone size={22} />
                         </div>
-                        <div className="space-y-3">
+                        <div className="min-w-0 space-y-2">
                           <div className="flex flex-wrap items-center gap-2">
-                            <h4 className="text-xl font-black tracking-tight">{peer.name}</h4>
+                            <h4 className="text-lg font-black tracking-tight">{peer.name}</h4>
                             {!peer.enabled && <span className="status-chip status-chip-danger">Disabled</span>}
-                            {peer.is_distribute && <span className="status-chip"><Share2 size={12} /> Distribute peer</span>}
-                            {peer.is_distribute && peer.mesh_trust && peer.mesh_trust !== 'untrusted' && <span className="status-chip status-chip-muted">{peer.mesh_trust}</span>}
-                            {peer.primary_group && <span className="status-chip status-chip-muted">Primary {peer.primary_group}</span>}
-                            {peer.is_manual_key && <span className="status-chip status-chip-muted"><Lock size={12} /> Manual key</span>}
-                            {peer.keepalive > 0 && <span className="status-chip">Keepalive {peer.keepalive}s</span>}
-                            {hasShaper && <span className="status-chip">Shaped</span>}
-                            {peer.transport_name && <span className="status-chip status-chip-muted">Transport {peer.transport_name}</span>}
+                            {peer.is_distribute && <span className="status-chip"><Share2 size={12} /> Distribute</span>}
                             {peer.transport_state && (
                               <span className={transportStateChipClass(peer.transport_state)}>
                                 {formatTransportState(peer.transport_state)}
                               </span>
                             )}
+                            {hasShaper && <span className="status-chip">Shaped</span>}
                           </div>
-                          <div className="space-y-1">
-                            <p className="font-mono text-sm text-[var(--accent)]">{peer.assigned_ips}</p>
-                            <div className="flex flex-wrap gap-4 text-sm text-[var(--muted)]">
-                              <span className="inline-flex items-center gap-1"><Activity size={14} /> {peer.has_handshake ? `Last handshake ${new Date(peer.last_handshake_time).toLocaleTimeString()}` : 'No handshake yet'}</span>
-                              <span className="inline-flex items-center gap-1"><Globe size={14} /> {formatBytes((peer.transmit_bytes || 0) + (peer.receive_bytes || 0))} total</span>
-                              {peer.expires_at && (
-                                <span className="inline-flex items-center gap-1">
-                                  Expires {new Date(peer.expires_at).toLocaleString()}
-                                </span>
-                              )}
-                            </div>
+                          <div className="flex flex-wrap gap-3 text-sm text-[var(--muted)]">
+                            <span className="font-mono text-[var(--accent)]">{peer.assigned_ips}</span>
+                            <span>{peer.username || 'Unknown owner'}</span>
+                            <span>{peer.has_handshake ? `Handshake ${new Date(peer.last_handshake_time).toLocaleTimeString()}` : 'No handshake yet'}</span>
+                            <span>{formatBytes((peer.transmit_bytes || 0) + (peer.receive_bytes || 0))} total</span>
                           </div>
                         </div>
-                      </div>
+                        <span className="peer-row-toggle">
+                          {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                        </span>
+                      </button>
 
-                      <div className="flex flex-wrap gap-2 lg:justify-end">
+                      <div className="peer-row-actions">
                         <button type="button" onClick={() => handlePing(peer.id)} disabled={pinging === peer.id} className="ghost-button">
                           {pinging === peer.id ? <Loader2 className="animate-spin" size={16} /> : <Activity size={16} />}
                           <span>Ping</span>
@@ -593,82 +658,84 @@ export default function PeersTab({ isAdmin, currentUsername, onSelectPeer }) {
                       </div>
                     </div>
 
-                    <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-                      <div className="traffic-panel">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div>
-                            <span className="eyebrow">Recent Traffic</span>
-                            <h5 className="text-lg font-black tracking-tight">Short-term in-memory usage graph</h5>
+                    {isExpanded && (
+                      <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+                        <div className="traffic-panel">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <span className="eyebrow">Recent Traffic</span>
+                              <h5 className="text-lg font-black tracking-tight">Short-term in-memory usage graph</h5>
+                            </div>
+                            <span className="text-sm text-[var(--muted)]">
+                              {peer.traffic_history?.length || 0} samples
+                            </span>
                           </div>
-                          <span className="text-sm text-[var(--muted)]">
-                            {peer.traffic_history?.length || 0} samples
-                          </span>
+                          <TrafficSparkline history={peer.traffic_history || []} />
+                          <div className="grid gap-3 sm:grid-cols-3">
+                            <div className="stat-tile">
+                              <span className="stat-label">Latest receive</span>
+                              <strong>{formatBytes(peer.traffic_history?.at(-1)?.receive_delta || 0)}</strong>
+                            </div>
+                            <div className="stat-tile">
+                              <span className="stat-label">Latest transmit</span>
+                              <strong>{formatBytes(peer.traffic_history?.at(-1)?.transmit_delta || 0)}</strong>
+                            </div>
+                            <div className="stat-tile">
+                              <span className="stat-label">Latest combined</span>
+                              <strong>{formatBytes(peer.traffic_history?.at(-1)?.total_delta || 0)}</strong>
+                            </div>
+                          </div>
                         </div>
-                        <TrafficSparkline history={peer.traffic_history || []} />
-                        <div className="grid gap-3 sm:grid-cols-3">
-                          <div className="stat-tile">
-                            <span className="stat-label">Latest receive</span>
-                            <strong>{formatBytes(peer.traffic_history?.at(-1)?.receive_delta || 0)}</strong>
-                          </div>
-                          <div className="stat-tile">
-                            <span className="stat-label">Latest transmit</span>
-                            <strong>{formatBytes(peer.traffic_history?.at(-1)?.transmit_delta || 0)}</strong>
-                          </div>
-                          <div className="stat-tile">
-                            <span className="stat-label">Latest combined</span>
-                            <strong>{formatBytes(peer.traffic_history?.at(-1)?.total_delta || 0)}</strong>
-                          </div>
-                        </div>
-                      </div>
 
-                      <div className="grid gap-3">
-                        <div className="stat-tile">
-                          <span className="stat-label">Traffic shaper</span>
-                          <strong>
-                            Up {formatBps(peer.traffic_upload_bps)} · Down {formatBps(peer.traffic_download_bps)}
-                            {(peer.traffic_latency_ms || 0) > 0 ? ` · +${peer.traffic_latency_ms} ms` : ''}
-                          </strong>
-                        </div>
-                        {hasTransportDetails && (
+                        <div className="grid gap-3">
                           <div className="stat-tile">
-                            <span className="stat-label">Live transport</span>
-                            <strong className="break-all font-mono text-sm">
-                              {peer.transport_name || 'unknown'}
-                              {peer.transport_state ? ` · ${formatTransportState(peer.transport_state)}` : ''}
-                            </strong>
-                            {(peer.transport_endpoint || peer.transport_source_addr || peer.transport_carrier_remote_addr) && (
-                              <div className="mt-2 space-y-1 text-xs text-[var(--muted)]">
-                                {peer.transport_endpoint && <div>endpoint {peer.transport_endpoint}</div>}
-                                {peer.transport_source_addr && <div>source {peer.transport_source_addr}</div>}
-                                {peer.transport_carrier_remote_addr && <div>carrier {peer.transport_carrier_remote_addr}</div>}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        {(isAdmin || peer.public_key) && (
-                          <div className="stat-tile">
-                            <span className="stat-label">Public key</span>
-                            <strong className="break-all font-mono text-sm">{peer.public_key || 'Hidden by policy'}</strong>
-                          </div>
-                        )}
-                        {(peer.endpoint_ip || peer.static_endpoint) && (
-                          <div className="stat-tile">
-                            <span className="stat-label">Bootstrap endpoint</span>
-                            <strong className="break-all font-mono text-sm">
-                              {peer.static_endpoint ? `Static ${peer.static_endpoint}` : peer.endpoint_ip}
+                            <span className="stat-label">Traffic shaper</span>
+                            <strong>
+                              Up {formatBps(peer.traffic_upload_bps)} · Down {formatBps(peer.traffic_download_bps)}
+                              {(peer.traffic_latency_ms || 0) > 0 ? ` · +${peer.traffic_latency_ms} ms` : ''}
                             </strong>
                           </div>
-                        )}
-                        <div className="stat-tile">
-                          <span className="stat-label">Config availability</span>
-                          <strong>
-                            {peer.has_private_key_material
-                              ? (peer.is_e2e ? (hasNonce ? 'Unlocked in this browser' : 'Nonce missing in this browser') : 'Server-managed')
-                              : 'Private key not retained'}
-                          </strong>
+                          {hasTransportDetails && (
+                            <div className="stat-tile">
+                              <span className="stat-label">Live transport</span>
+                              <strong className="break-all font-mono text-sm">
+                                {peer.transport_name || 'unknown'}
+                                {peer.transport_state ? ` · ${formatTransportState(peer.transport_state)}` : ''}
+                              </strong>
+                              {(peer.transport_endpoint || peer.transport_source_addr || peer.transport_carrier_remote_addr) && (
+                                <div className="mt-2 space-y-1 text-xs text-[var(--muted)]">
+                                  {peer.transport_endpoint && <div>endpoint {peer.transport_endpoint}</div>}
+                                  {peer.transport_source_addr && <div>source {peer.transport_source_addr}</div>}
+                                  {peer.transport_carrier_remote_addr && <div>carrier {peer.transport_carrier_remote_addr}</div>}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {(isAdmin || peer.public_key) && (
+                            <div className="stat-tile">
+                              <span className="stat-label">Public key</span>
+                              <strong className="break-all font-mono text-sm">{peer.public_key || 'Hidden by policy'}</strong>
+                            </div>
+                          )}
+                          {(peer.endpoint_ip || peer.static_endpoint) && (
+                            <div className="stat-tile">
+                              <span className="stat-label">Bootstrap endpoint</span>
+                              <strong className="break-all font-mono text-sm">
+                                {peer.static_endpoint ? `Static ${peer.static_endpoint}` : peer.endpoint_ip}
+                              </strong>
+                            </div>
+                          )}
+                          <div className="stat-tile">
+                            <span className="stat-label">Config availability</span>
+                            <strong>
+                              {peer.has_private_key_material
+                                ? (peer.is_e2e ? (hasNonce ? 'Unlocked in this browser' : 'Nonce missing in this browser') : 'Server-managed')
+                                : 'Private key not retained'}
+                            </strong>
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    )}
                   </div>
                 </article>
               );
@@ -676,6 +743,31 @@ export default function PeersTab({ isAdmin, currentUsername, onSelectPeer }) {
           </div>
         </section>
       ))}
+
+      {filteredPeers.length === 0 && (
+        <div className="state-shell py-16">
+          <Search size={28} className="text-[var(--accent)]" />
+          <p className="text-sm text-[var(--muted)]">No peers matched this search.</p>
+        </div>
+      )}
+
+      {filteredPeers.length > 0 && totalPages > 1 && (
+        <section className="panel p-4 sm:p-5">
+          <div className="pagination-row">
+            <p className="text-sm text-[var(--muted)]">
+              Showing {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, filteredPeers.length)} of {filteredPeers.length}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="ghost-button" disabled={page === 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>
+                Previous
+              </button>
+              <button type="button" className="ghost-button" disabled={page === totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>
+                Next
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
 
       {editingPeer && (
         <EditPeerModal

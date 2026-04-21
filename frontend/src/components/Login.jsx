@@ -146,6 +146,10 @@ export default function Login({ theme = 'light', onToggleTheme = () => {}, onLog
                 </a>
               )}
             </form>
+
+            <p className="mt-6 text-center text-sm text-[var(--muted)]">
+              Powered by <a className="font-semibold text-[var(--accent)] underline-offset-4 hover:underline" href="https://github.com/reindertpelsma/simple-wireguard-server" target="_blank" rel="noreferrer">simple-wireguard-server</a>
+            </p>
           </section>
         </div>
       </div>

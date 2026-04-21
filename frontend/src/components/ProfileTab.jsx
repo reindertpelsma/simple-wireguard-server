@@ -267,7 +267,7 @@ export default function ProfileTab() {
                   />
                 </div>
               )}
-              <p className="break-all rounded-xl bg-[var(--surface)] px-3 py-2 font-mono text-xs">{totpSetup.secret}</p>
+              <p className="break-all rounded-xl border border-[var(--border)] bg-[var(--panel-strong)] px-3 py-2 font-mono text-xs">{totpSetup.secret}</p>
               <div className="flex gap-2">
                 <input
                   className="input-field"
@@ -313,8 +313,8 @@ export default function ProfileTab() {
         </p>
 
         {createdCred && (
-          <div className="mb-4 rounded-2xl border border-emerald-300 bg-emerald-50 p-4 dark:border-emerald-700 dark:bg-emerald-950">
-            <p className="mb-2 text-sm font-semibold text-emerald-800 dark:text-emerald-200">Credential created — save the password now, it won't be shown again.</p>
+          <div className="success-panel mb-4">
+            <p className="mb-2 text-sm font-semibold">Credential created — save the password now, it won't be shown again.</p>
             <p className="font-mono text-sm"><span className="text-[var(--muted)]">Username:</span> {createdCred.username}</p>
             <p className="font-mono text-sm"><span className="text-[var(--muted)]">Password:</span> {createdCred.password}</p>
           </div>
@@ -322,7 +322,7 @@ export default function ProfileTab() {
 
         <div className="mb-4 space-y-2">
           {creds.map(c => (
-            <div key={c.id} className="flex items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3">
+            <div key={c.id} className="flex items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] p-3">
               <div className="flex-1">
                 <p className="font-mono text-sm font-semibold">{c.username}</p>
                 <p className="text-xs text-[var(--muted)]">{c.name} · created {new Date(c.created_at).toLocaleDateString()}</p>
@@ -352,8 +352,8 @@ export default function ProfileTab() {
           </p>
 
           {createdTurnCred && (
-            <div className="mb-4 rounded-2xl border border-emerald-300 bg-emerald-50 p-4 dark:border-emerald-700 dark:bg-emerald-950">
-              <p className="mb-2 text-sm font-semibold text-emerald-800 dark:text-emerald-200">TURN credential created — save the password now, it won't be shown again.</p>
+            <div className="success-panel mb-4">
+              <p className="mb-2 text-sm font-semibold">TURN credential created — save the password now, it won't be shown again.</p>
               <p className="font-mono text-sm"><span className="text-[var(--muted)]">Username:</span> {createdTurnCred.username}</p>
               <p className="font-mono text-sm"><span className="text-[var(--muted)]">Password:</span> {createdTurnCred.password}</p>
               {Array.isArray(createdTurnCred.profiles) && createdTurnCred.profiles.map((profile) => (
@@ -364,15 +364,15 @@ export default function ProfileTab() {
 
           <div className="mb-4 space-y-2">
             {turnCreds.map((cred) => (
-              <div key={cred.id} className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3">
+              <div key={cred.id} className="rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] p-3">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="font-mono text-sm font-semibold">{cred.username}</p>
                       {cred.connected ? (
-                        <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900 dark:text-green-300">connected</span>
+                        <span className="status-chip">connected</span>
                       ) : (
-                        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700 dark:bg-gray-700 dark:text-gray-300">idle</span>
+                        <span className="status-chip status-chip-muted">idle</span>
                       )}
                     </div>
                     <p className="text-xs text-[var(--muted)]">{cred.name} · port {cred.port}</p>
