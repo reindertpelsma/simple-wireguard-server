@@ -30,14 +30,35 @@ export default function TurnTab() {
 
   const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
 
-  async function fetchData() {
+  async function loadData() {
     const [listenerData, statusData] = await Promise.all([api.getTURNListeners(), api.getTURNStatus()]);
-    setListeners(listenerData || []);
-    setStatus(statusData || { sessions: [], listeners: [] });
+    return {
+      listeners: listenerData || [],
+      status: statusData || { sessions: [], listeners: [] },
+    };
+  }
+
+  function applyData(next) {
+    setListeners(next.listeners);
+    setStatus(next.status);
   }
 
   useEffect(() => {
-    fetchData().catch((err) => console.error(err));
+    let cancelled = false;
+    async function run() {
+      try {
+        const next = await loadData();
+        if (!cancelled) {
+          applyData(next);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    run();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleSubmit = async (event) => {
@@ -52,7 +73,7 @@ export default function TurnTab() {
       setForm(EMPTY_FORM);
       setShowForm(false);
       setEditId(null);
-      await fetchData();
+      applyData(await loadData());
     } catch (err) {
       setError(err.message);
     }
@@ -79,7 +100,7 @@ export default function TurnTab() {
   const handleDelete = async (id) => {
     if (!confirm('Delete this TURN listener?')) return;
     await api.deleteTURNListener(id);
-    await fetchData();
+    applyData(await loadData());
   };
 
   const activeCount = Array.isArray(status.sessions) ? status.sessions.length : 0;
