@@ -17,7 +17,6 @@ if ! command -v go >/dev/null 2>&1; then
   exit 127
 fi
 
-
 export CGO_ENABLED=0
 
 # Detect OS

@@ -39,40 +39,28 @@ jobs:
   build-uwgsocks-ui:
     name: uwgsocks-ui ${{ matrix.goos }} ${{ matrix.goarch }}
     needs: frontend
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
           - goos: linux
             goarch: amd64
-            runner: ubuntu-latest
-            cc: zig cc -target x86_64-linux-musl
             artifact_name: uwgsocks-ui-linux-amd64
           - goos: linux
             goarch: arm64
-            runner: ubuntu-latest
-            cc: zig cc -target aarch64-linux-musl
             artifact_name: uwgsocks-ui-linux-arm64
           - goos: darwin
             goarch: amd64
-            runner: macos-13
-            cc: clang
             artifact_name: uwgsocks-ui-darwin-amd64
           - goos: darwin
             goarch: arm64
-            runner: macos-14
-            cc: clang
             artifact_name: uwgsocks-ui-darwin-arm64
           - goos: windows
             goarch: amd64
-            runner: ubuntu-latest
-            cc: zig cc -target x86_64-windows-gnu
             artifact_name: uwgsocks-ui-windows-amd64.exe
           - goos: windows
             goarch: arm64
-            runner: ubuntu-latest
-            cc: zig cc -target aarch64-windows-gnu
             artifact_name: uwgsocks-ui-windows-arm64.exe
     steps:
       - uses: actions/checkout@v4
@@ -80,11 +68,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-
-      - uses: goto-bus-stop/setup-zig@v2
-        if: runner.os == 'Linux'
-        with:
-          version: 0.14.1
 
       - name: Download frontend dist
         uses: actions/download-artifact@v4
@@ -97,7 +80,6 @@ jobs:
           CGO_ENABLED: 0
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CC: ${{ matrix.cc }}
         shell: bash
         run: |
           set -euo pipefail
