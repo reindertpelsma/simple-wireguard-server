@@ -65,7 +65,9 @@ The main suite covers:
   transparent TCP memory budget behavior, and traffic-shaper TCP pacing.
 - `uwgsocks-ui` login, cookie-gated dashboard serving, public shared-config
   asset access, TOTP 2FA, OIDC callback flow, YAML override persistence,
-  daemon restart wiring, and live peer traffic-shaper propagation.
+  daemon restart wiring, live peer traffic-shaper propagation, and an
+  end-to-end smoke path of login -> peer create -> config fetch -> `/proxy`
+  through a real managed `uwgsocks` child process.
 
 `scripts/iperf_loopback.sh` builds `uwgsocks` when needed, writes temporary
 demo WireGuard configs, starts two binaries, exposes an iperf3 server through a

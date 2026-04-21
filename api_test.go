@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/glebarez/sqlite"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -30,7 +30,7 @@ func setupTestDB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{}, &AccessProxyCredential{}, &ExposedService{}, &PolicyTag{}, &TunnelForward{})
+	gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{}, &AccessProxyCredential{}, &ExposedService{}, &PolicyTag{}, &TunnelForward{}, &TURNHostedListener{}, &TURNCredential{})
 	initGlobalSettings()
 }
 
@@ -116,6 +116,163 @@ func TestPrimaryGroupSubnetAllocationAndPeerGroupInheritance(t *testing.T) {
 	}
 	if !strings.HasPrefix(peer.AssignedIPs, "100.100.4.") {
 		t.Fatalf("peer assigned IPs = %q, want engineering subnet", peer.AssignedIPs)
+	}
+}
+
+func TestBuildClientConfigTextAddsControlDirectiveForPeerSyncPeer(t *testing.T) {
+	setupTestDB(t)
+	setTestConfig(t, "peer_sync_mode", "opt_in")
+	setTestConfig(t, "peer_sync_port", "28765")
+	setTestConfig(t, "client_dns", "100.64.0.1")
+	peer := Peer{Name: "laptop", AssignedIPs: "100.64.0.2/32", PeerSyncEnabled: true}
+
+	cfg := buildClientConfigText(peer, "priv", "psk", true)
+	if !strings.Contains(cfg, "#!Control=http://100.64.0.1:28765") {
+		t.Fatalf("client config missing control directive:\n%s", cfg)
+	}
+
+	peer.PeerSyncEnabled = false
+	cfg = buildClientConfigText(peer, "priv", "psk", true)
+	if strings.Contains(cfg, "#!Control=") {
+		t.Fatalf("client config unexpectedly contained control directive for non-opt-in peer:\n%s", cfg)
+	}
+}
+
+func TestBuildClientTransportProfilesIncludesPreferredAndSocket(t *testing.T) {
+	setupTestDB(t)
+	setTestConfig(t, "socket_proxy_enabled", "true")
+	setTestConfig(t, "server_endpoint", "vpn.example.com:51820")
+	setTestConfig(t, "default_transport", "web")
+	if err := gdb.Create(&TransportConfig{
+		Name:             "udp",
+		Base:             "udp",
+		Listen:           true,
+		ListenPort:       51820,
+		ExternalEndpoint: "vpn.example.com:51820",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&TransportConfig{
+		Name:             "web",
+		Base:             "https",
+		Listen:           true,
+		ExternalEndpoint: "https://ui.example.com/socket",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	profiles := buildClientTransportProfiles("https://ui.example.com")
+	if len(profiles) < 3 {
+		t.Fatalf("profiles len=%d want at least 3: %+v", len(profiles), profiles)
+	}
+	if profiles[1].Name != "web" || !profiles[1].Preferred || profiles[1].DirectiveURL != "https://ui.example.com/socket" {
+		t.Fatalf("unexpected preferred web profile: %+v", profiles[1])
+	}
+	last := profiles[len(profiles)-1]
+	if last.Name != "ui-socket-http" || last.DirectiveURL != "https://ui.example.com/socket" {
+		t.Fatalf("unexpected socket profile: %+v", last)
+	}
+}
+
+func TestBuildClientTransportProfilesIncludesTURNHTTPSPath(t *testing.T) {
+	setupTestDB(t)
+	setTestConfig(t, "server_endpoint", "vpn.example.com:51820")
+	if err := gdb.Create(&TransportConfig{
+		Name:             "turn-web",
+		Base:             "turn",
+		TurnServer:       "turn.example.com:443",
+		TurnUsername:     "alice",
+		TurnPassword:     "secret",
+		TurnProtocol:     "https",
+		Listen:           false,
+		ListenPort:       0,
+		ExternalEndpoint: "",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	profiles := buildClientTransportProfiles("")
+	if len(profiles) != 1 {
+		t.Fatalf("profiles len=%d want 1: %+v", len(profiles), profiles)
+	}
+	if got := profiles[0].DirectiveTURN; got != "https://alice:secret@turn.example.com:443/turn" {
+		t.Fatalf("unexpected TURN directive %q", got)
+	}
+}
+
+func TestGetTransportsConfigIncludesWebSocketAdvertiseHTTP3(t *testing.T) {
+	setupTestDB(t)
+	if err := gdb.Create(&TransportConfig{
+		Name:             "edge-web",
+		Base:             "https",
+		Listen:           true,
+		ListenPort:       443,
+		WSPath:           "/wg",
+		ConnectHost:      "origin.internal:443",
+		HostHeader:       "vpn.example.com",
+		WSAdvertiseHTTP3: true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := getTransportsConfig()
+	if len(cfg) != 1 {
+		t.Fatalf("expected created transport only, got %d", len(cfg))
+	}
+
+	var found map[string]interface{}
+	for _, entry := range cfg {
+		if entry["name"] == "edge-web" {
+			found = entry
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("edge-web transport not found in config")
+	}
+	ws, ok := found["websocket"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("websocket block missing or wrong type: %#v", found["websocket"])
+	}
+	if got := ws["path"]; got != "/wg" {
+		t.Fatalf("unexpected websocket path %#v", got)
+	}
+	if got := ws["connect_host"]; got != "origin.internal:443" {
+		t.Fatalf("unexpected websocket connect_host %#v", got)
+	}
+	if got := ws["host_header"]; got != "vpn.example.com" {
+		t.Fatalf("unexpected websocket host_header %#v", got)
+	}
+	if got := ws["advertise_http3"]; got != true {
+		t.Fatalf("unexpected websocket advertise_http3 %#v", got)
+	}
+}
+
+func TestTransportConfigToAPIPayloadIncludesWebSocketAdvertiseHTTP3(t *testing.T) {
+	payload := transportConfigToAPIPayload(TransportConfig{
+		Name:             "edge-web",
+		Base:             "https",
+		Listen:           true,
+		WSPath:           "/wg",
+		ConnectHost:      "origin.internal:443",
+		HostHeader:       "vpn.example.com",
+		WSAdvertiseHTTP3: true,
+	})
+	ws, ok := payload["websocket"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("websocket block missing or wrong type: %#v", payload["websocket"])
+	}
+	if got := ws["path"]; got != "/wg" {
+		t.Fatalf("unexpected websocket path %#v", got)
+	}
+	if got := ws["connect_host"]; got != "origin.internal:443" {
+		t.Fatalf("unexpected websocket connect_host %#v", got)
+	}
+	if got := ws["host_header"]; got != "vpn.example.com" {
+		t.Fatalf("unexpected websocket host_header %#v", got)
+	}
+	if got := ws["advertise_http3"]; got != true {
+		t.Fatalf("unexpected websocket advertise_http3 %#v", got)
 	}
 }
 

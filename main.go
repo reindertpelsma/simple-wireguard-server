@@ -32,7 +32,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,7 +43,7 @@ import (
 	"gopkg.in/yaml.v3"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
-	"github.com/glebarez/sqlite"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -53,15 +52,18 @@ var frontendFS embed.FS
 
 // --- Configuration ---
 var (
-	dbDSN         = flag.String("dsn", "wgui.db", "Database DSN")
-	dbType        = flag.String("db-type", "sqlite", "Database type: sqlite, mysql, postgres")
-	listenAddr    = flag.String("listen", "0.0.0.0:8080", "HTTP/HTTPS listen address")
-	uwgsocksURL   = flag.String("wg-url", "unix://uwgsocks.sock", "uwgsocks API URL")
-	uwgsocksToken = flag.String("wg-token", "", "uwgsocks API Token")
-	manageDaemon  = flag.Bool("manage", true, "Start and manage uwgsocks daemon")
-	daemonPath    = flag.String("daemon-path", "", "Path to uwgsocks binary (auto-detected if empty)")
-	tlsCert       = flag.String("tls-cert", "", "Path to TLS cert")
-	tlsKey        = flag.String("tls-key", "", "Path to TLS key")
+	dbDSN          = flag.String("dsn", "wgui.db", "Database DSN")
+	dbType         = flag.String("db-type", "sqlite", "Database type: sqlite, mysql, postgres")
+	listenAddr     = flag.String("listen", "0.0.0.0:8080", "HTTP/HTTPS listen address")
+	uwgsocksURL    = flag.String("wg-url", "unix://uwgsocks.sock", "uwgsocks API URL")
+	uwgsocksToken  = flag.String("wg-token", "", "uwgsocks API Token")
+	manageDaemon   = flag.Bool("manage", true, "Start and manage uwgsocks daemon")
+	daemonPath     = flag.String("daemon-path", "", "Path to uwgsocks binary (auto-detected if empty)")
+	turnDaemonPath = flag.String("turn-daemon-path", "", "Path to turn binary (auto-detected if empty)")
+	turnAPIURL     = flag.String("turn-api-url", "unix://turn.sock", "Managed TURN API URL")
+	turnAPIToken   = flag.String("turn-api-token", "", "Managed TURN API bearer token")
+	tlsCert        = flag.String("tls-cert", "", "Path to TLS cert")
+	tlsKey         = flag.String("tls-key", "", "Path to TLS key")
 
 	// TURN settings from CLI
 	turnServer             = flag.String("turn-server", "", "TURN server (host:port)")
@@ -133,10 +135,6 @@ func findDaemon(system bool) string {
 	name := "uwgsocks"
 	if system {
 		name = "uwgkm"
-	}
-
-	if runtime.GOOS == "windows" {
-		name += ".exe"
 	}
 
 	if _, err := os.Stat("./" + name); err == nil {
@@ -219,6 +217,8 @@ type Peer struct {
 	// Distribute peer: when true, this peer is included in all other clients' configs
 	IsDistribute       bool   `gorm:"default:false" json:"is_distribute"`
 	DistributeEndpoint string `json:"distribute_endpoint,omitempty"` // endpoint advertised to other clients; auto-updated from last-seen IP
+	MeshTrust          string `gorm:"default:'untrusted'" json:"mesh_trust,omitempty"`
+	PeerSyncEnabled    bool   `gorm:"default:false" json:"peer_sync_enabled"`
 	// Stats from uwgsocks (volatile)
 	LastHandshakeTime     string             `gorm:"-" json:"last_handshake_time,omitempty"`
 	TransmitBytes         uint64             `gorm:"-" json:"transmit_bytes"`
@@ -273,22 +273,24 @@ type TunnelForward struct {
 // TransportConfig stores a pluggable transport entry managed via the UI.
 // The JSON fields mirror transport.Config so the UI can read/write them.
 type TransportConfig struct {
-	ID          uint   `gorm:"primaryKey" json:"id"`
-	Name        string `gorm:"uniqueIndex;not null" json:"name"`
-	Base        string `gorm:"not null" json:"base"`                   // udp|tcp|tls|dtls|http|https|quic|quic-ws|url
-	Listen      bool   `gorm:"default:false" json:"listen"`            // enable listener
-	ListenPort  int    `gorm:"default:0" json:"listen_port,omitempty"` // 0 = use wireguard.listen_port
-	ListenAddrs string `json:"listen_addrs,omitempty"`                 // comma-separated IPs, empty = all
-	URL         string `json:"url,omitempty"`                          // for base=url
-	WSPath      string `json:"ws_path,omitempty"`
-	ConnectHost string `json:"connect_host,omitempty"`
-	HostHeader  string `json:"host_header,omitempty"`
+	ID               uint   `gorm:"primaryKey" json:"id"`
+	Name             string `gorm:"uniqueIndex;not null" json:"name"`
+	Base             string `gorm:"not null" json:"base"`                   // udp|tcp|tls|dtls|http|https|quic|quic-ws|url
+	Listen           bool   `gorm:"default:false" json:"listen"`            // enable listener
+	ListenPort       int    `gorm:"default:0" json:"listen_port,omitempty"` // 0 = use wireguard.listen_port
+	ListenAddrs      string `json:"listen_addrs,omitempty"`                 // comma-separated IPs, empty = all
+	ExternalEndpoint string `json:"external_endpoint,omitempty"`            // advertised client endpoint or URL
+	URL              string `json:"url,omitempty"`                          // for base=url
+	WSPath           string `json:"ws_path,omitempty"`
+	ConnectHost      string `json:"connect_host,omitempty"`
+	HostHeader       string `json:"host_header,omitempty"`
+	WSAdvertiseHTTP3 bool   `json:"ws_advertise_http3,omitempty"`
 	// TURN base transport settings
 	TurnServer             string `json:"turn_server,omitempty"`
 	TurnUsername           string `json:"turn_username,omitempty"`
 	TurnPassword           string `json:"turn_password,omitempty"`
 	TurnRealm              string `json:"turn_realm,omitempty"`
-	TurnProtocol           string `json:"turn_protocol,omitempty"`
+	TurnProtocol           string `json:"turn_protocol,omitempty"` // udp|tcp|tls|dtls|http|https|quic
 	TurnNoCreatePermission bool   `json:"turn_no_create_permission,omitempty"`
 	TurnIncludeWGPublicKey bool   `json:"turn_include_wg_public_key,omitempty"`
 	TurnPermissions        string `json:"turn_permissions,omitempty"` // comma-separated
@@ -501,6 +503,7 @@ func main() {
 		}
 		log.Printf("Unix sockets unavailable; daemon API on %s (token set)", *uwgsocksURL)
 	}
+	normalizeManagedTURNAPIURL()
 
 	if *extractDist != "" {
 		if err := extractEmbeddedDist(*extractDist); err != nil {
@@ -558,6 +561,7 @@ func main() {
 	}
 
 	*daemonPath = findDaemon(*systemMode)
+	*turnDaemonPath = findTurnDaemon()
 
 	if *manageDaemon {
 		// Set MTU if not manually overridden in DB already
@@ -568,6 +572,10 @@ func main() {
 
 		generateCanonicalYAML()
 		startDaemon()
+		generateTurnCanonicalYAML()
+		if err := startManagedTURNDaemon(); err != nil {
+			log.Printf("Failed to start managed TURN daemon: %v", err)
+		}
 	}
 
 	time.Sleep(1 * time.Second)
@@ -602,6 +610,9 @@ func main() {
 	mux.HandleFunc("GET /api/me/proxy-credentials", authMiddleware(handleGetMyProxyCredentials))
 	mux.HandleFunc("POST /api/me/proxy-credentials", authMiddleware(handleCreateMyProxyCredential))
 	mux.HandleFunc("DELETE /api/me/proxy-credentials/{id}", authMiddleware(handleDeleteMyProxyCredential))
+	mux.HandleFunc("GET /api/me/turn-credentials", authMiddleware(handleGetMyTURNCredentials))
+	mux.HandleFunc("POST /api/me/turn-credentials", authMiddleware(handleCreateMyTURNCredential))
+	mux.HandleFunc("DELETE /api/me/turn-credentials/{id}", authMiddleware(handleDeleteMyTURNCredential))
 	mux.HandleFunc("GET /api/oidc/login", handleOIDCLogin)
 	mux.HandleFunc("GET /api/oidc/callback", handleOIDCCallback)
 	mux.HandleFunc("GET /api/share/{token}", handleGetSharedConfig)
@@ -646,6 +657,7 @@ func main() {
 	mux.HandleFunc("POST /api/admin/transports", authMiddleware(adminMiddleware(handleCreateTransport)))
 	mux.HandleFunc("PATCH /api/admin/transports/{id}", authMiddleware(adminMiddleware(handleUpdateTransport)))
 	mux.HandleFunc("DELETE /api/admin/transports/{id}", authMiddleware(adminMiddleware(handleDeleteTransport)))
+	registerTURNRoutes(mux)
 
 	// Admin - Config
 	mux.HandleFunc("GET /api/admin/config", authMiddleware(adminMiddleware(handleGetAdminConfig)))
@@ -692,7 +704,7 @@ func initDB() {
 	}
 
 	// Auto Migration
-	err = gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{}, &AccessProxyCredential{}, &ExposedService{}, &Group{}, &TunnelForward{})
+	err = gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{}, &AccessProxyCredential{}, &ExposedService{}, &Group{}, &TunnelForward{}, &TURNHostedListener{}, &TURNCredential{})
 
 	if err != nil {
 		log.Fatalf("Failed to migrate database: %v", err)
@@ -766,6 +778,17 @@ type SecretsConfig struct {
 	HMACSecretHex    string `json:"hmac_secret_hex"`
 }
 
+func randomInt(min, max int) int {
+	if max <= min {
+		return min
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(max-min)))
+	if err != nil {
+		return min
+	}
+	return min + int(n.Int64())
+}
+
 func initGlobalSettings() {
 	secretsPath := resolvePath("wgui_secrets.json")
 	var secrets SecretsConfig
@@ -828,7 +851,8 @@ func initGlobalSettings() {
 		"enable_client_ipv6":       ipv6Default,
 		"public_keys_visible":      "false",
 		"endpoints_visible":        "false",
-		"p2p_routing_enabled":      "true",
+		"peer_sync_mode":           "disabled",
+		"peer_sync_port":           strconv.Itoa(randomInt(20000, 60000)),
 		"allow_custom_private_key": "true",
 		"e2e_encryption_enabled":   "true",
 		"global_mtu":               "1420",
@@ -862,6 +886,13 @@ func initGlobalSettings() {
 		"socket_proxy_http_port":      strconv.Itoa(findFreePort()),
 		"exposed_services_enabled":    "true",
 		"service_auth_cookie_seconds": strconv.Itoa(int((12 * time.Hour).Seconds())),
+		"turn_hosting_enabled":        "false",
+		"turn_hosting_realm":          "open-relay.local",
+		"turn_hosting_relay_ip":       "",
+		"turn_allow_user_credentials": "false",
+		"turn_max_user_credentials":   "3",
+		"turn_user_port_start":        "40000",
+		"turn_user_port_end":          "49999",
 	}
 
 	if ep := os.Getenv("WG_PUBLIC_ENDPOINT"); ep != "" {
@@ -1138,6 +1169,7 @@ func handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 		Keepalive           int        `json:"keepalive"`
 		StaticEndpoint      string     `json:"static_endpoint,omitempty"`
 		IsManualKey         bool       `json:"is_manual_key"`
+		PeerSyncEnabled     bool       `json:"peer_sync_enabled"`
 		ExpiresAt           *time.Time `json:"expires_at,omitempty"`
 		TrafficShaper       struct {
 			UploadBps     int64 `json:"upload_bps"`
@@ -1209,11 +1241,13 @@ func handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 		Keepalive:           req.Keepalive,
 		IsManualKey:         req.IsManualKey,
 		StaticEndpoint:      req.StaticEndpoint,
+		PeerSyncEnabled:     req.PeerSyncEnabled,
 		ExpiresAt:           req.ExpiresAt,
 		Enabled:             true,
 		TrafficUploadBps:    req.TrafficShaper.UploadBps,
 		TrafficDownloadBps:  req.TrafficShaper.DownloadBps,
 		TrafficLatencyMs:    req.TrafficShaper.LatencyMillis,
+		MeshTrust:           "untrusted",
 	}
 
 	if err := gdb.Create(&peer).Error; err != nil {
@@ -1483,6 +1517,8 @@ func handleUpdatePeer(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt          *time.Time `json:"expires_at"`
 		IsDistribute       *bool      `json:"is_distribute"`
 		DistributeEndpoint *string    `json:"distribute_endpoint"`
+		MeshTrust          *string    `json:"mesh_trust"`
+		PeerSyncEnabled    *bool      `json:"peer_sync_enabled"`
 		TrafficShaper      *struct {
 			UploadBps     int64 `json:"upload_bps"`
 			DownloadBps   int64 `json:"download_bps"`
@@ -1523,6 +1559,22 @@ func handleUpdatePeer(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.DistributeEndpoint != nil && isAdmin {
 		peer.DistributeEndpoint = *req.DistributeEndpoint
+	}
+	if req.MeshTrust != nil && isAdmin {
+		switch strings.TrimSpace(*req.MeshTrust) {
+		case "", "untrusted", "trusted_always", "trusted_if_dynamic_acls":
+			if strings.TrimSpace(*req.MeshTrust) == "" {
+				peer.MeshTrust = "untrusted"
+			} else {
+				peer.MeshTrust = strings.TrimSpace(*req.MeshTrust)
+			}
+		default:
+			http.Error(w, "invalid mesh_trust", http.StatusBadRequest)
+			return
+		}
+	}
+	if req.PeerSyncEnabled != nil && isAdmin {
+		peer.PeerSyncEnabled = *req.PeerSyncEnabled
 	}
 	if req.TrafficShaper != nil && isAdmin {
 		peer.TrafficUploadBps = req.TrafficShaper.UploadBps
@@ -1612,11 +1664,19 @@ func uwgRequestWithContext(ctx context.Context, method, path string, body io.Rea
 func handleUpdateGlobalConfig(w http.ResponseWriter, r *http.Request) {
 	var req map[string]string
 	json.NewDecoder(r.Body).Decode(&req)
+	turnChanged := false
 	for k, v := range req {
 		gdb.Model(&GlobalConfig{}).Where("key = ?", k).Update("value", v)
+		if strings.HasPrefix(k, "turn_") {
+			turnChanged = true
+		}
 	}
 	generateCanonicalYAML()
+	generateTurnCanonicalYAML()
 	pushACLsToDaemon()
+	if turnChanged {
+		go restartManagedTURNDaemonIfEnabled()
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -2353,7 +2413,7 @@ func getTransportsConfig() []map[string]interface{} {
 		if t.URL != "" {
 			m["url"] = t.URL
 		}
-		if t.WSPath != "" || t.ConnectHost != "" || t.HostHeader != "" {
+		if t.WSPath != "" || t.ConnectHost != "" || t.HostHeader != "" || t.WSAdvertiseHTTP3 {
 			ws := map[string]interface{}{}
 			if t.WSPath != "" {
 				ws["path"] = t.WSPath
@@ -2363,6 +2423,9 @@ func getTransportsConfig() []map[string]interface{} {
 			}
 			if t.HostHeader != "" {
 				ws["host_header"] = t.HostHeader
+			}
+			if t.WSAdvertiseHTTP3 {
+				ws["advertise_http3"] = true
 			}
 			m["websocket"] = ws
 		}
@@ -2832,6 +2895,16 @@ func pushPeerToDaemon(peer Peer) {
 	if peer.StaticEndpoint != "" {
 		payload["endpoint"] = peer.StaticEndpoint
 	}
+	if peerSyncActiveForPeer(peer) {
+		if control := resolvedPeerSyncControlURL(); control != "" {
+			payload["control_url"] = control
+			payload["mesh_enabled"] = true
+			payload["mesh_accept_acls"] = true
+		}
+	}
+	if peerSyncMode() != "disabled" && strings.TrimSpace(peer.MeshTrust) != "" && strings.TrimSpace(peer.MeshTrust) != "untrusted" {
+		payload["mesh_trust"] = strings.TrimSpace(peer.MeshTrust)
+	}
 	if peer.TrafficUploadBps > 0 || peer.TrafficDownloadBps > 0 || peer.TrafficLatencyMs > 0 {
 		payload["traffic_shaper"] = map[string]interface{}{
 			"upload_bps":   peer.TrafficUploadBps,
@@ -2881,13 +2954,19 @@ func transportConfigToAPIPayload(t TransportConfig) map[string]interface{} {
 	if t.URL != "" {
 		m["url"] = t.URL
 	}
-	if t.WSPath != "" || t.ConnectHost != "" || t.HostHeader != "" {
+	if t.WSPath != "" || t.ConnectHost != "" || t.HostHeader != "" || t.WSAdvertiseHTTP3 {
 		ws := map[string]interface{}{}
 		if t.WSPath != "" {
 			ws["path"] = t.WSPath
 		}
+		if t.ConnectHost != "" {
+			ws["connect_host"] = t.ConnectHost
+		}
 		if t.HostHeader != "" {
 			ws["host_header"] = t.HostHeader
+		}
+		if t.WSAdvertiseHTTP3 {
+			ws["advertise_http3"] = true
 		}
 		m["websocket"] = ws
 	}
@@ -3202,6 +3281,11 @@ func buildCanonicalYAMLBytes(applyCustom bool) []byte {
 		"dns_server": map[string]interface{}{
 			"listen": getConfig("client_dns") + ":53",
 		},
+	}
+	if control := resolvedPeerSyncControlURL(); control != "" {
+		managed["mesh_control"] = map[string]interface{}{
+			"listen": strings.TrimPrefix(control, "http://"),
+		}
 	}
 
 	// host_forward: enabled when redirect IP is non-empty

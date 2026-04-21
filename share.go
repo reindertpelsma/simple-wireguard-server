@@ -27,29 +27,32 @@ type SharedConfigLink struct {
 }
 
 type sharedConfigResponse struct {
-	PeerName            string     `json:"peer_name"`
-	DownloadName        string     `json:"download_name"`
-	PublicKey           string     `json:"public_key"`
-	AssignedIPs         string     `json:"assigned_ips"`
-	Keepalive           int        `json:"keepalive"`
-	IsE2E               bool       `json:"is_e2e"`
-	ServerPublicKey     string     `json:"server_public_key"`
-	ServerEndpoint      string     `json:"server_endpoint"`
-	DefaultTransport    string     `json:"default_transport,omitempty"`
-	ClientDNS           string     `json:"client_dns"`
-	MTU                 string     `json:"mtu"`
-	EnableIPv6          string     `json:"enable_client_ipv6"`
-	ClientAllowedIPs    string     `json:"client_allowed_ips,omitempty"`
-	DirectiveTCP        string     `json:"client_config_tcp,omitempty"`
-	DirectiveTURN       string     `json:"client_config_turn_url,omitempty"`
-	DirectiveSkipVerify string     `json:"client_config_skipverifytls,omitempty"`
-	DirectiveURL        string     `json:"client_config_url,omitempty"`
-	PresharedKey        string              `json:"preshared_key,omitempty"`
-	PrivateKey          string              `json:"private_key,omitempty"`
-	EncryptedPrivateKey string              `json:"encrypted_private_key,omitempty"`
-	OneUse              bool                `json:"one_use"`
-	ExpiresAt           *time.Time          `json:"expires_at,omitempty"`
-	DistributePeers     []DistributePeerInfo `json:"distribute_peers,omitempty"`
+	PeerName            string                   `json:"peer_name"`
+	DownloadName        string                   `json:"download_name"`
+	PublicKey           string                   `json:"public_key"`
+	AssignedIPs         string                   `json:"assigned_ips"`
+	Keepalive           int                      `json:"keepalive"`
+	IsE2E               bool                     `json:"is_e2e"`
+	ServerPublicKey     string                   `json:"server_public_key"`
+	ServerEndpoint      string                   `json:"server_endpoint"`
+	DefaultTransport    string                   `json:"default_transport,omitempty"`
+	ClientDNS           string                   `json:"client_dns"`
+	MTU                 string                   `json:"mtu"`
+	EnableIPv6          string                   `json:"enable_client_ipv6"`
+	ClientAllowedIPs    string                   `json:"client_allowed_ips,omitempty"`
+	DirectiveTCP        string                   `json:"client_config_tcp,omitempty"`
+	DirectiveTURN       string                   `json:"client_config_turn_url,omitempty"`
+	DirectiveSkipVerify string                   `json:"client_config_skipverifytls,omitempty"`
+	DirectiveURL        string                   `json:"client_config_url,omitempty"`
+	DirectiveControl    string                   `json:"client_config_control_url,omitempty"`
+	TransportProfiles   []clientTransportProfile `json:"client_transport_profiles,omitempty"`
+	PeerSyncEnabled     bool                     `json:"peer_sync_enabled,omitempty"`
+	PresharedKey        string                   `json:"preshared_key,omitempty"`
+	PrivateKey          string                   `json:"private_key,omitempty"`
+	EncryptedPrivateKey string                   `json:"encrypted_private_key,omitempty"`
+	OneUse              bool                     `json:"one_use"`
+	ExpiresAt           *time.Time               `json:"expires_at,omitempty"`
+	DistributePeers     []DistributePeerInfo     `json:"distribute_peers,omitempty"`
 }
 
 func shareTokenHash(token string) string {
@@ -168,6 +171,9 @@ func handleGetSharedConfig(w http.ResponseWriter, r *http.Request) {
 		DirectiveTURN:       getConfig("client_config_turn_url"),
 		DirectiveSkipVerify: getConfig("client_config_skipverifytls"),
 		DirectiveURL:        getConfig("client_config_url"),
+		DirectiveControl:    resolvedPeerSyncControlURL(),
+		TransportProfiles:   buildClientTransportProfiles(canonicalBaseURL(r)),
+		PeerSyncEnabled:     peerSyncActiveForPeer(peer),
 		OneUse:              link.OneUse,
 		ExpiresAt:           link.ExpiresAt,
 		PresharedKey:        decryptAtRest(peer.PresharedKey),

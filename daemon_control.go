@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -21,18 +20,12 @@ var daemonState = struct {
 	done chan error
 }{}
 
-// pipeWriter wraps an io.Writer so exec.Cmd routes output through a
-// goroutine+pipe instead of directly inheriting the OS file descriptor.
-// This ensures cmd.Wait() returns cleanly after the child exits on Windows,
-// avoiding "WaitDelay expired" errors caused by inherited handle lifetimes.
-type pipeWriter struct{ io.Writer }
-
 func startManagedDaemon() error {
 	time.Sleep(1 * time.Second)
 
 	cmd := buildDaemonCommand()
-	cmd.Stdout = pipeWriter{os.Stdout}
-	cmd.Stderr = pipeWriter{os.Stderr}
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 
 	log.Printf("Starting managed daemon: %s %s", cmd.Path, strings.Join(cmd.Args[1:], " "))
 	if err := cmd.Start(); err != nil {
@@ -133,6 +126,10 @@ func restartManagedDaemonIfEnabled() {
 
 func handleRestartDaemon(w http.ResponseWriter, r *http.Request) {
 	if err := restartManagedDaemon(); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	if err := restartManagedTURNDaemon(); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}

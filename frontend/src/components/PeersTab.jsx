@@ -216,7 +216,8 @@ function ShareModal({ peer, onClose }) {
   );
 }
 
-function EditPeerModal({ peer, isAdmin, onClose, onSave }) {
+function EditPeerModal({ peer, isAdmin, globalConfig, onClose, onSave }) {
+  const peerSyncMode = globalConfig?.peer_sync_mode || 'disabled';
   const [form, setForm] = useState({
     name: peer.name,
     groups: peer.groups || peer.tags || '',
@@ -229,6 +230,8 @@ function EditPeerModal({ peer, isAdmin, onClose, onSave }) {
     traffic_latency_ms: peer.traffic_latency_ms ? String(peer.traffic_latency_ms) : '',
     is_distribute: peer.is_distribute || false,
     distribute_endpoint: peer.distribute_endpoint || '',
+    peer_sync_enabled: peer.peer_sync_enabled || false,
+    mesh_trust: peer.mesh_trust || 'untrusted',
   });
 
   const submit = async (event) => {
@@ -248,6 +251,8 @@ function EditPeerModal({ peer, isAdmin, onClose, onSave }) {
         },
         is_distribute: form.is_distribute,
         distribute_endpoint: form.distribute_endpoint,
+        peer_sync_enabled: form.peer_sync_enabled,
+        mesh_trust: form.mesh_trust,
       } : {}),
     });
   };
@@ -337,16 +342,35 @@ function EditPeerModal({ peer, isAdmin, onClose, onSave }) {
                 <input type="checkbox" checked={form.is_distribute} onChange={(event) => setForm({ ...form, is_distribute: event.target.checked })} />
                 <span>Mark as distribute peer</span>
               </label>
+              {peerSyncMode === 'opt_in' && (
+                <label className="flex items-center gap-3 text-sm font-medium">
+                  <input type="checkbox" checked={form.peer_sync_enabled} onChange={(event) => setForm({ ...form, peer_sync_enabled: event.target.checked })} />
+                  <span>Opt this client into peer syncing / P2P discovery</span>
+                </label>
+              )}
               {form.is_distribute && (
-                <div className="space-y-2">
-                  <label className="field-label">Distribute endpoint override</label>
-                  <input
-                    className="input-field font-mono text-sm"
-                    placeholder="Auto-detected from last handshake (leave blank)"
-                    value={form.distribute_endpoint}
-                    onChange={(event) => setForm({ ...form, distribute_endpoint: event.target.value })}
-                  />
-                  <p className="text-xs text-[var(--muted)]">Override the endpoint advertised in other clients' configs. Leave blank to use the last-seen IP.</p>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="field-label">Distribute endpoint override</label>
+                    <input
+                      className="input-field font-mono text-sm"
+                      placeholder="Auto-detected from last handshake (leave blank)"
+                      value={form.distribute_endpoint}
+                      onChange={(event) => setForm({ ...form, distribute_endpoint: event.target.value })}
+                    />
+                    <p className="text-xs text-[var(--muted)]">Override the endpoint advertised in other clients' configs. Leave blank to use the last-seen IP.</p>
+                  </div>
+                  {peerSyncMode !== 'disabled' && (
+                    <div className="space-y-2">
+                      <label className="field-label">Mesh trust</label>
+                      <select className="input-field" value={form.mesh_trust} onChange={(event) => setForm({ ...form, mesh_trust: event.target.value })}>
+                        <option value="untrusted">Untrusted</option>
+                        <option value="trusted_always">Trusted always</option>
+                        <option value="trusted_if_dynamic_acls">Trusted only if the other peer has dynamic ACLs</option>
+                      </select>
+                      <p className="text-xs text-[var(--muted)]">Controls how uwgsocks relay fallback treats this distributed peer. It trusts the WireGuard endpoint behavior, not the routed networks behind it.</p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -364,6 +388,7 @@ function EditPeerModal({ peer, isAdmin, onClose, onSave }) {
 
 export default function PeersTab({ isAdmin, currentUsername, onSelectPeer }) {
   const [peers, setPeers] = useState([]);
+  const [globalConfig, setGlobalConfig] = useState({});
   const [loading, setLoading] = useState(true);
   const [pinging, setPinging] = useState(null);
   const [editingPeer, setEditingPeer] = useState(null);
@@ -377,8 +402,12 @@ export default function PeersTab({ isAdmin, currentUsername, onSelectPeer }) {
 
   const fetchPeers = async () => {
     try {
-      const data = await api.getPeers();
+      const [data, cfg] = await Promise.all([
+        api.getPeers(),
+        api.getPublicConfig().catch(() => ({})),
+      ]);
       setPeers(data || []);
+      setGlobalConfig(cfg || {});
     } catch (err) {
       console.error(err);
     } finally {
@@ -489,6 +518,7 @@ export default function PeersTab({ isAdmin, currentUsername, onSelectPeer }) {
                             <h4 className="text-xl font-black tracking-tight">{peer.name}</h4>
                             {!peer.enabled && <span className="status-chip status-chip-danger">Disabled</span>}
                             {peer.is_distribute && <span className="status-chip"><Share2 size={12} /> Distribute peer</span>}
+                            {peer.is_distribute && peer.mesh_trust && peer.mesh_trust !== 'untrusted' && <span className="status-chip status-chip-muted">{peer.mesh_trust}</span>}
                             {peer.primary_group && <span className="status-chip status-chip-muted">Primary {peer.primary_group}</span>}
                             {peer.is_manual_key && <span className="status-chip status-chip-muted"><Lock size={12} /> Manual key</span>}
                             {peer.keepalive > 0 && <span className="status-chip">Keepalive {peer.keepalive}s</span>}
@@ -651,6 +681,7 @@ export default function PeersTab({ isAdmin, currentUsername, onSelectPeer }) {
         <EditPeerModal
           peer={editingPeer}
           isAdmin={isAdmin}
+          globalConfig={globalConfig}
           onClose={() => setEditingPeer(null)}
           onSave={handleUpdate}
         />

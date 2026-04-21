@@ -617,6 +617,7 @@ func handleHTTPAccessProxyConnect(w http.ResponseWriter, r *http.Request, identi
 		return
 	}
 	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
 	fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\nX-Forwarded-For: %s\r\n", target, target, clientIPForRequest(r))
 	if auth := upstreamProxyAuthorization(); auth != "" {
 		fmt.Fprintf(conn, "Proxy-Authorization: %s\r\n", auth)
@@ -633,6 +634,7 @@ func handleHTTPAccessProxyConnect(w http.ResponseWriter, r *http.Request, identi
 		http.Error(w, "Upstream proxy rejected CONNECT", resp.StatusCode)
 		return
 	}
+	_ = conn.SetDeadline(time.Time{})
 	hj, ok := w.(http.Hijacker)
 	if !ok {
 		http.Error(w, "Hijacking is not supported", http.StatusInternalServerError)

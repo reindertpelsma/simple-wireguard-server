@@ -1,14 +1,21 @@
 # Simple wireguard server
 
-A wireguard server manager without system installation requirements, based on [uwgsocks](https://github.com/reindertpelsma/userspace-wireguard-socks)
+A rootless WireGuard control plane built on [uwgsocks](https://github.com/reindertpelsma/userspace-wireguard-socks).
 
-Build a secure, rootless SD-WAN or VPN exit node in seconds.
+Build a secure WireGuard server, relay hub, or small peer-synced mesh without Docker privileges, kernel modules, or system routing changes.
 
 ## Quick Start (20 Seconds)
 
 1. **Build or download:**
-   Ensure you clone [https://github.com/reindertpelsma/userspace-wireguard-socks](https://github.com/reindertpelsma/userspace-wireguard-socks)
-   
+   Download:
+   ```bash
+   wget https://github.com/reindertpelsma/simple-wireguard-server/releases/download/0.1/uwgsocks-ui
+   wget https://github.com/reindertpelsma/userspace-wireguard-socks/releases/download/0.2/uwgsocks
+   wget https://github.com/reindertpelsma/simple-wireguard-server/releases/download/0.1/uwgkm #If you want to use Kernel Wireguard, requires root
+   chmod +x uwgsocks-ui uwgsocks uwgkm
+   ```
+
+   Or compile from source. Ensure you clone [https://github.com/reindertpelsma/userspace-wireguard-socks](https://github.com/reindertpelsma/userspace-wireguard-socks)
    ```bash
    ./compile.sh
    ```
@@ -26,6 +33,16 @@ Build a secure, rootless SD-WAN or VPN exit node in seconds.
    ```
 5. **Login:** Open `http://localhost:8080` and sign in with `admin` plus the password printed in the terminal. 
 
+## Why use it
+
+- Run a WireGuard server stack under any Unix account
+- Manage peers, ACLs, forwards, transports, and runtime updates from the browser
+- Publish internal services through login-gated subdomains
+- Expose a single-domain `/proxy` and `/socket` frontend for clients and tooling
+- Generate transport-aware WireGuard configs, including `#!` directives understood by `uwgsocks`
+- Optionally enable peer syncing / P2P discovery for direct paths or multi-server client distribution
+- Optionally host a managed TURN relay daemon with per-user TURN credentials and listener management from the UI
+
 ## Key Features
 
 - **Admin Dashboard:** Real-time metrics, handshakes, short-term traffic graphs, and global setting management.
@@ -38,7 +55,10 @@ Build a secure, rootless SD-WAN or VPN exit node in seconds.
 - **Configuration Merging:** Support for merging UI settings with a custom baseline YAML config.
 - **Shareable Configs:** Create self-authenticated config links with optional expiry or one-time use; E2E links keep the decrypting nonce in the URL fragment.
 - **Zero-Trust Security:** Client private keys never touch the server (encrypted in-browser via AES-GCM).
+- **Transport-aware client configs:** Offer the right endpoint, `Transport = ...`, `#!URL=...`, `#!TURN=...`, or `#!Control=...` per client profile instead of one fixed bootstrap path.
+- **Peer syncing / P2P:** Optional tunnel-only control endpoint lets `uwgsocks` clients discover other peers, sync distributed clients between servers, and attempt direct UDP paths without introducing a separate control plane stack.
 - **NAT Traversal:** Built-in TURN server support for connectivity through strict firewalls/CGNAT, by hosting a small TURN server see the userspace wireguard socks project.
+- **Hosted TURN relay:** Enable a managed `turn` child process, publish TURN listeners, and let users mint their own TURN credentials from the dashboard.
 - **Secure by Default:** Argon2id hashing, encryption at rest for DB fields, and single-port HTTP/HTTPS multiplexing.
 - **Reverse Proxy Aware:** Trust configured proxy CIDRs for `X-Forwarded-For` / `X-Forwarded-Proto`, set an explicit canonical base URL, and expose optional browser access paths through `/proxy`, `/socket`, and protected service subdomains.
 - **Tag-based ACLs:** Assign policy tags to users and peers, attach extra CIDRs to tags, and write ACLs against users or tags while the daemon still receives concrete IP/CIDR rules.
@@ -58,6 +78,14 @@ Detailed technical documentation and API schemas are available in the [docs/](./
 - `-frontend-dir`: Serve dashboard assets from a custom Vite `dist` directory instead of the embedded bundle.
 - `-extract-dist`: Extract the embedded dashboard bundle to a directory and exit.
 - `-oidc-issuer`, `-oidc-client-id`, `-oidc-client-secret`, `-oidc-redirect-url`: Enable OIDC sign-in. The same values can be supplied with `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and `OIDC_REDIRECT_URL`.
+
+## Documentation
+
+- [Configuration reference](docs/configuration.md)
+- [Proxy and routing behavior](docs/proxy-routing.md)
+- [Raw socket and `/socket` protocol](docs/socket-protocol.md)
+- [Testing and integration coverage](docs/testing.md)
+- [OpenAPI schema](docs/openapi.yaml)
 
 ## License
 ISC License. See [LICENSE](./LICENSE) for details.

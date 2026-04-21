@@ -2,15 +2,18 @@ import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Copy, Download, Loader2, ShieldCheck } from 'lucide-react';
 import { api } from '../lib/api';
 import { decryptPrivateKey, hashNonce } from '../lib/crypto';
-import { buildWireGuardConfig, downloadConfigFile } from '../lib/config';
+import { buildWireGuardConfig, downloadConfigFile, stripWGDirectives } from '../lib/config';
 import ThemeToggle from './ThemeToggle';
 
 export default function SharedConfigPage({ token, theme, onToggleTheme }) {
   const [config, setConfig] = useState('');
+  const [configSource, setConfigSource] = useState(null);
   const [status, setStatus] = useState('loading');
   const [message, setMessage] = useState('');
   const [meta, setMeta] = useState(null);
+  const [selectedTransport, setSelectedTransport] = useState('');
   const [copied, setCopied] = useState(false);
+  const [simpleView, setSimpleView] = useState(false);
   const loadedTokenRef = useRef('');
 
   useEffect(() => {
@@ -38,14 +41,17 @@ export default function SharedConfigPage({ token, theme, onToggleTheme }) {
           privateKey = await decryptPrivateKey(shared.encrypted_private_key, nonce);
         }
 
+        const profiles = Array.isArray(shared.client_transport_profiles) ? shared.client_transport_profiles : [];
+        const preferredProfile = profiles.find((profile) => profile.preferred) || profiles[0] || null;
         const configText = buildWireGuardConfig({
           privateKey,
           assignedIPs: shared.assigned_ips,
           dns: shared.client_dns,
           mtu: shared.mtu,
           serverPublicKey: shared.server_public_key,
-          endpoint: shared.server_endpoint,
-          transport: shared.default_transport,
+          endpoint: preferredProfile?.endpoint || shared.server_endpoint,
+          transport: preferredProfile?.transport || shared.default_transport,
+          transportProfile: preferredProfile,
           presharedKey: shared.preshared_key,
           keepalive: shared.keepalive,
           enableIPv6: shared.enable_client_ipv6,
@@ -54,11 +60,15 @@ export default function SharedConfigPage({ token, theme, onToggleTheme }) {
           directiveTURN: shared.client_config_turn_url,
           directiveSkipVerifyTLS: shared.client_config_skipverifytls,
           directiveURL: shared.client_config_url,
+          directiveControl: shared.client_config_control_url,
+          peerSyncEnabled: !!shared.peer_sync_enabled,
           distributePeers: shared.distribute_peers,
         });
 
         if (!cancelled) {
           setMeta(shared);
+          setConfigSource({ privateKey, presharedKey: shared.preshared_key });
+          setSelectedTransport(preferredProfile?.name || '');
           setConfig(configText);
           setStatus('ready');
         }
@@ -76,11 +86,44 @@ export default function SharedConfigPage({ token, theme, onToggleTheme }) {
     };
   }, [token]);
 
+  const rebuildForTransport = (transportName) => {
+    if (!meta || !configSource) {
+      return;
+    }
+    const profiles = Array.isArray(meta.client_transport_profiles) ? meta.client_transport_profiles : [];
+    const chosenProfile = profiles.find((profile) => profile.name === transportName) || profiles.find((profile) => profile.preferred) || profiles[0] || null;
+    setSelectedTransport(chosenProfile?.name || '');
+    setConfig(buildWireGuardConfig({
+      privateKey: configSource.privateKey,
+      assignedIPs: meta.assigned_ips,
+      dns: meta.client_dns,
+      mtu: meta.mtu,
+      serverPublicKey: meta.server_public_key,
+      endpoint: chosenProfile?.endpoint || meta.server_endpoint,
+      transport: chosenProfile?.transport || meta.default_transport,
+      transportProfile: chosenProfile,
+      presharedKey: configSource.presharedKey,
+      keepalive: meta.keepalive,
+      enableIPv6: meta.enable_client_ipv6,
+      allowedIPs: meta.client_allowed_ips,
+      directiveTCP: meta.client_config_tcp,
+      directiveTURN: meta.client_config_turn_url,
+      directiveSkipVerifyTLS: meta.client_config_skipverifytls,
+      directiveURL: meta.client_config_url,
+      directiveControl: meta.client_config_control_url,
+      peerSyncEnabled: !!meta.peer_sync_enabled,
+      distributePeers: meta.distribute_peers,
+    }));
+  };
+
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(config);
+    await navigator.clipboard.writeText(simpleView ? stripWGDirectives(config) : config);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
   };
+
+  const displayedConfig = simpleView ? stripWGDirectives(config) : config;
+  const hasDirectiveLines = config.includes('#!');
 
   return (
     <div className="app-shell px-4 py-6 sm:px-6">
@@ -146,18 +189,34 @@ export default function SharedConfigPage({ token, theme, onToggleTheme }) {
                   <p className="text-sm text-[var(--muted)]">Downloads with a `.conf` filename for direct import into WireGuard clients.</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  {Array.isArray(meta.client_transport_profiles) && meta.client_transport_profiles.length > 1 && (
+                    <label className="ghost-button gap-2">
+                      <span>Transport</span>
+                      <select value={selectedTransport} onChange={(event) => rebuildForTransport(event.target.value)}>
+                        {meta.client_transport_profiles.map((profile) => (
+                          <option key={profile.name} value={profile.name}>{profile.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {hasDirectiveLines && (
+                    <label className="ghost-button gap-2">
+                      <input type="checkbox" checked={simpleView} onChange={(event) => setSimpleView(event.target.checked)} />
+                      <span>Show simple config only</span>
+                    </label>
+                  )}
                   <button type="button" onClick={handleCopy} className="secondary-button">
                     <Copy size={16} />
                     <span>{copied ? 'Copied' : 'Copy'}</span>
                   </button>
-                  <button type="button" onClick={() => downloadConfigFile(meta.download_name, config)} className="primary-button">
+                  <button type="button" onClick={() => downloadConfigFile(meta.download_name, displayedConfig)} className="primary-button">
                     <Download size={16} />
                     <span>Download `.conf`</span>
                   </button>
                 </div>
               </div>
 
-              <pre className="config-block">{config}</pre>
+              <pre className="config-block">{displayedConfig}</pre>
             </div>
           )}
         </div>

@@ -1,3 +1,5 @@
+//go:build integration
+
 package main
 
 import (
@@ -9,12 +11,13 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -40,6 +43,7 @@ func TestIntegrationManagedDaemonRuntimeAndProxy(t *testing.T) {
 	setTestConfig(t, "yaml_http_port", fmt.Sprint(httpProxyPort))
 	setTestConfig(t, "yaml_socks5_port", fmt.Sprint(freeIntegrationTCPPort(t)))
 	setTestConfig(t, "http_proxy_access_enabled", "true")
+	setTestConfig(t, "e2e_encryption_enabled", "false")
 	setTestConfig(t, "acl_outbound_default", "deny")
 	setTestConfig(t, "acl_relay_default", "deny")
 	setTestConfig(t, "yaml_l3_forwarding", "true")
@@ -81,8 +85,9 @@ func TestIntegrationManagedDaemonRuntimeAndProxy(t *testing.T) {
 	reversePort := 18091
 	stopClient := startIntegrationClientDaemon(t, daemonBin, dataDir, clientKey, peer, assignedIPv4, clientEchoPort, clientEchoTargetPort, clientLocalForwardPort, reversePort)
 	defer stopClient()
+	waitForDaemonPeerHandshake(t, clientKey.PublicKey().String())
 
-	allowStaffToClientEcho(t, assignedIPv4.String(), clientEchoPort)
+	allowStaffToTarget(t, assignedIPv4.String(), clientEchoPort)
 	assertDaemonACLContains(t, "outbound", assignedIPv4.String()+"/32", fmt.Sprint(clientEchoPort))
 	assertDaemonACLContains(t, "relay", assignedIPv4.String()+"/32", fmt.Sprint(clientEchoPort))
 
@@ -114,12 +119,161 @@ func TestIntegrationManagedDaemonRuntimeAndProxy(t *testing.T) {
 
 	ui := httptest.NewServer(wrapRootHandler(http.NewServeMux()))
 	defer ui.Close()
+	waitForProxyCONNECTReady(t, ui.URL, fmt.Sprintf("%s:%d", assignedIPv4, clientEchoPort))
 	assertProxyCONNECT(t, ui.URL, fmt.Sprintf("%s:%d", assignedIPv4, clientEchoPort), "proxied", "client:proxied\n", http.StatusOK)
 
 	gdb.Model(&ACLRule{}).Where("list_name = ?", "outbound").Update("action", "deny")
 	invalidateACLPushCache()
 	pushACLsToDaemon()
 	assertProxyCONNECT(t, ui.URL, fmt.Sprintf("%s:%d", assignedIPv4, clientEchoPort), "blocked", "", http.StatusForbidden)
+}
+
+func TestIntegrationUISmokeLoginConfigAndProxy(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	requireUDPPort(t, 51820)
+
+	daemonBin := buildIntegrationUwgsocks(t)
+	apiPort := freeIntegrationTCPPort(t)
+	httpProxyPort := freeIntegrationTCPPort(t)
+	dataDir := t.TempDir()
+	setupIntegrationGlobals(t, dataDir, daemonBin, fmt.Sprintf("http://127.0.0.1:%d", apiPort), "integration-token")
+	setupTestDB(t)
+	ensureDefaultTransport()
+	setTestConfig(t, "enable_client_ipv6", "false")
+	setTestConfig(t, "yaml_http_port", fmt.Sprint(httpProxyPort))
+	setTestConfig(t, "yaml_socks5_port", fmt.Sprint(freeIntegrationTCPPort(t)))
+	setTestConfig(t, "http_proxy_access_enabled", "true")
+	setTestConfig(t, "acl_outbound_default", "deny")
+	setTestConfig(t, "acl_relay_default", "deny")
+	setTestConfig(t, "yaml_l3_forwarding", "true")
+
+	if err := gdb.Create(&Group{Name: "engineering", Subnet: "100.100.8.0/24", SubnetIPv6: "fd00:100:8::/64"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	user, _ := createTestUser(t, "integration-admin", true)
+	user.PrimaryGroup = "engineering"
+	user.Tags = "staff"
+	if err := gdb.Save(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	hash, _ := hashPassword("proxy-secret")
+	if err := gdb.Create(&AccessProxyCredential{UserID: user.ID, Username: "proxy-user", PasswordHash: hash, Name: "integration", Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	generateCanonicalYAML()
+	if err := startManagedDaemon(); err != nil {
+		t.Fatalf("start managed daemon: %v", err)
+	}
+	t.Cleanup(func() { _ = stopManagedDaemon(5 * time.Second) })
+	waitForDaemonStatus(t)
+
+	ui := httptest.NewServer(buildIntegrationUIHandler())
+	defer ui.Close()
+
+	loginPageResp, err := http.Get(ui.URL + "/login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loginPage, _ := io.ReadAll(loginPageResp.Body)
+	_ = loginPageResp.Body.Close()
+	if loginPageResp.StatusCode != http.StatusOK || !bytes.Contains(loginPage, []byte("<form id=\"login-form\">")) {
+		t.Fatalf("login page status=%d body=%q", loginPageResp.StatusCode, loginPage)
+	}
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Jar: jar}
+	loginBody, _ := json.Marshal(map[string]string{
+		"username": "integration-admin",
+		"password": "password",
+	})
+	loginResp, err := client.Post(ui.URL+"/api/login", "application/json", bytes.NewReader(loginBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loginResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(loginResp.Body)
+		_ = loginResp.Body.Close()
+		t.Fatalf("login status=%d body=%q", loginResp.StatusCode, body)
+	}
+	_ = loginResp.Body.Close()
+	if len(jar.Cookies(mustURL(t, ui.URL))) == 0 {
+		t.Fatal("login did not set a session cookie")
+	}
+
+	createBody, _ := json.Marshal(map[string]interface{}{
+		"name":      "smoke-client",
+		"keepalive": 1,
+	})
+	createResp, err := client.Post(ui.URL+"/api/peers", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if createResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(createResp.Body)
+		_ = createResp.Body.Close()
+		t.Fatalf("create peer status=%d body=%q", createResp.StatusCode, body)
+	}
+	_ = createResp.Body.Close()
+
+	var peers []Peer
+	getJSONAs(t, client, ui.URL+"/api/peers", &peers)
+	if len(peers) != 1 || peers[0].Name != "smoke-client" {
+		t.Fatalf("unexpected peers after create: %+v", peers)
+	}
+	peerID := peers[0].ID
+	if peers[0].PublicKey == "" {
+		t.Fatalf("created peer missing public key: %+v", peers[0])
+	}
+	var dbPeer Peer
+	if err := gdb.First(&dbPeer, peerID).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	var publicCfg map[string]string
+	getJSONAs(t, client, ui.URL+"/api/config/public", &publicCfg)
+	if publicCfg["server_pubkey"] == "" || publicCfg["server_endpoint"] == "" {
+		t.Fatalf("public config missing endpoint material: %+v", publicCfg)
+	}
+
+	var privateCfg struct {
+		EncryptedPrivateKey string `json:"encrypted_private_key"`
+		PresharedKey        string `json:"preshared_key"`
+		AssignedIPs         string `json:"assigned_ips"`
+	}
+	getJSONAs(t, client, fmt.Sprintf("%s/api/peers/%d/private", ui.URL, peerID), &privateCfg)
+	if privateCfg.EncryptedPrivateKey == "" || privateCfg.AssignedIPs == "" {
+		t.Fatalf("peer private config incomplete: %+v", privateCfg)
+	}
+	assignedIPv4 := firstAssignedIPv4(t, privateCfg.AssignedIPs)
+	assertDaemonPeer(t, peers[0].PublicKey)
+
+	clientEchoPort := freeIntegrationTCPPort(t)
+	clientEchoTargetPort := freeIntegrationTCPPort(t)
+	stopClientEcho := startHostEcho(t, fmt.Sprintf("127.0.0.1:%d", clientEchoTargetPort), "client")
+	defer stopClientEcho()
+	clientLocalForwardPort := freeIntegrationTCPPort(t)
+	reversePort := 18092
+	stopClient := startIntegrationClientDaemon(t, daemonBin, dataDir, mustIntegrationKeyFromPrivate(t, privateCfg.EncryptedPrivateKey), dbPeer, assignedIPv4, clientEchoPort, clientEchoTargetPort, clientLocalForwardPort, reversePort)
+	defer stopClient()
+	waitForDaemonPeerHandshake(t, peers[0].PublicKey)
+
+	smokeForwardPort := freeIntegrationTCPPort(t)
+	createRuntimeForward(t, TunnelForward{
+		Name:   "smoke-proxy-forward",
+		Proto:  "tcp",
+		Listen: fmt.Sprintf("127.0.0.1:%d", smokeForwardPort),
+		Target: fmt.Sprintf("%s:%d", assignedIPv4, clientEchoPort),
+	})
+	allowStaffToTarget(t, assignedIPv4.String(), clientEchoPort)
+	allowStaffToTarget(t, "127.0.0.1", smokeForwardPort)
+	waitForProxyCONNECTReady(t, ui.URL, fmt.Sprintf("127.0.0.1:%d", smokeForwardPort))
+	assertProxyCONNECTStatus(t, ui.URL, fmt.Sprintf("127.0.0.1:%d", smokeForwardPort), http.StatusOK)
 }
 
 func setupIntegrationGlobals(t *testing.T, dir, daemon, apiURL, token string) {
@@ -144,36 +298,11 @@ func setupIntegrationGlobals(t *testing.T, dir, daemon, apiURL, token string) {
 
 func buildIntegrationUwgsocks(t *testing.T) string {
 	t.Helper()
-
-	repo := "./userspace-wireguard-socks"
-	if st, err := os.Stat(filepath.Join(repo, "uwgsocks.go")); err != nil || st.IsDir() {
-		repo = "../userspace-wireguard-socks"
-		if st, err := os.Stat(filepath.Join(repo, "uwgsocks.go")); err != nil || st.IsDir() {
-			repo = "../"
-			if st, err := os.Stat(filepath.Join(repo, "uwgsocks.go")); err != nil || st.IsDir() {
-				t.Skipf("sibling userspace-wireguard-socks repo not found at %s", repo)
-			}
-		}
+	repo := filepath.Join(os.Getenv("HOME"), "userspace-wireguard-socks")
+	if st, err := os.Stat(filepath.Join(repo, "go.mod")); err != nil || st.IsDir() {
+		t.Skipf("sibling userspace-wireguard-socks repo not found at %s", repo)
 	}
-	binDir, err := os.MkdirTemp("", "uwgsocks-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// On Windows the OS holds an .exe lock briefly after the process exits.
-	// t.TempDir cleanup is immediate and fails; retry with backoff instead.
-	t.Cleanup(func() {
-		for i := 0; i < 15; i++ {
-			if err := os.RemoveAll(binDir); err == nil {
-				return
-			}
-			time.Sleep(200 * time.Millisecond)
-		}
-		_ = os.RemoveAll(binDir)
-	})
-	bin := filepath.Join(binDir, "uwgsocks")
-	if runtime.GOOS == "windows" {
-		bin += ".exe"
-	}
+	bin := filepath.Join(t.TempDir(), "uwgsocks")
 	goBin := "go"
 	if p := filepath.Join(os.Getenv("HOME"), "sdk", "go", "bin", "go"); fileExists(p) {
 		goBin = p
@@ -209,6 +338,19 @@ func createIntegrationPeer(t *testing.T, user User, publicKey string) Peer {
 		t.Fatal(err)
 	}
 	return peer
+}
+
+func buildIntegrationUIHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/login", handleLogin)
+	mux.HandleFunc("GET /api/peers", authMiddleware(handleGetPeers))
+	mux.HandleFunc("POST /api/peers", authMiddleware(handleCreatePeer))
+	mux.HandleFunc("GET /api/peers/{id}/private", authMiddleware(handleGetPeerPrivate))
+	mux.HandleFunc("GET /api/distribute-peers", authMiddleware(handleGetDistributePeers))
+	mux.HandleFunc("GET /api/config/public", authMiddleware(handleGetPublicConfig))
+	registerAccessProxyRoutes(mux)
+	registerFrontendRoutes(mux)
+	return wrapRootHandler(mux)
 }
 
 func startIntegrationClientDaemon(t *testing.T, daemonBin, dir string, key wgtypes.Key, peer Peer, assignedIPv4 netip.Addr, clientEchoPort, clientEchoTargetPort, localForwardPort, reversePort int) func() {
@@ -252,8 +394,8 @@ func startIntegrationClientDaemon(t *testing.T, daemonBin, dir string, key wgtyp
 		t.Fatal(err)
 	}
 	cmd := exec.Command(daemonBin, "--config", path)
-	cmd.Stdout = pipeWriter{os.Stdout}
-	cmd.Stderr = pipeWriter{os.Stderr}
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start client daemon: %v", err)
 	}
@@ -273,6 +415,11 @@ func startIntegrationClientDaemon(t *testing.T, daemonBin, dir string, key wgtyp
 }
 
 func allowStaffToClientEcho(t *testing.T, ip string, port int) {
+	t.Helper()
+	allowStaffToTarget(t, ip, port)
+}
+
+func allowStaffToTarget(t *testing.T, ip string, port int) {
 	t.Helper()
 	rules := []ACLRule{
 		{ListName: "outbound", Action: "allow", Dst: ip + "/32", Proto: "tcp", DPort: fmt.Sprint(port), SortOrder: 0},
@@ -372,6 +519,7 @@ func assertProxyCONNECT(t *testing.T, uiURL, target, msg, want string, wantStatu
 		t.Fatal(err)
 	}
 	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 	auth := base64.StdEncoding.EncodeToString([]byte("proxy-user:proxy-secret"))
 	_, _ = fmt.Fprintf(conn, "CONNECT /proxy/%s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: Basic %s\r\n\r\n", target, addr, auth)
 	br := bufio.NewReader(conn)
@@ -380,7 +528,8 @@ func assertProxyCONNECT(t *testing.T, uiURL, target, msg, want string, wantStatu
 		t.Fatal(err)
 	}
 	if resp.StatusCode != wantStatus {
-		t.Fatalf("CONNECT status = %d, want %d", resp.StatusCode, wantStatus)
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("CONNECT status = %d, want %d, body=%q", resp.StatusCode, wantStatus, body)
 	}
 	if wantStatus != http.StatusOK {
 		return
@@ -393,6 +542,90 @@ func assertProxyCONNECT(t *testing.T, uiURL, target, msg, want string, wantStatu
 	if got != want {
 		t.Fatalf("proxy echo = %q, want %q", got, want)
 	}
+}
+
+func assertProxyCONNECTStatus(t *testing.T, uiURL, target string, wantStatus int) {
+	t.Helper()
+	addr := strings.TrimPrefix(uiURL, "http://")
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	auth := base64.StdEncoding.EncodeToString([]byte("proxy-user:proxy-secret"))
+	_, _ = fmt.Fprintf(conn, "CONNECT /proxy/%s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: Basic %s\r\n\r\n", target, addr, auth)
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != wantStatus {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("CONNECT status = %d, want %d, body=%q", resp.StatusCode, wantStatus, body)
+	}
+}
+
+func waitForProxyCONNECTReady(t *testing.T, uiURL, target string) {
+	t.Helper()
+	var lastErr error
+	for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); time.Sleep(250 * time.Millisecond) {
+		addr := strings.TrimPrefix(uiURL, "http://")
+		conn, err := net.DialTimeout("tcp", addr, 1500*time.Millisecond)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		_ = conn.SetDeadline(time.Now().Add(1500 * time.Millisecond))
+		auth := base64.StdEncoding.EncodeToString([]byte("proxy-user:proxy-secret"))
+		_, _ = fmt.Fprintf(conn, "CONNECT /proxy/%s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: Basic %s\r\n\r\n", target, addr, auth)
+		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		_ = conn.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			return
+		}
+		lastErr = fmt.Errorf("status %d", resp.StatusCode)
+	}
+	t.Fatalf("proxy CONNECT to %s did not become ready: %v", target, lastErr)
+}
+
+func getJSONAs(t *testing.T, client *http.Client, rawURL string, out interface{}) {
+	t.Helper()
+	resp, err := client.Get(rawURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("GET %s status=%d body=%q", rawURL, resp.StatusCode, body)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		t.Fatalf("decode %s: %v", rawURL, err)
+	}
+}
+
+func mustIntegrationKeyFromPrivate(t *testing.T, raw string) wgtypes.Key {
+	t.Helper()
+	key, err := wgtypes.ParseKey(strings.TrimSpace(raw))
+	if err != nil {
+		t.Fatalf("parse private key: %v", err)
+	}
+	return key
+}
+
+func mustURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse url %q: %v", raw, err)
+	}
+	return u
 }
 
 func writeReadLine(conn net.Conn, msg string) (string, error) {
@@ -444,6 +677,30 @@ func waitForDaemonStatus(t *testing.T) {
 		}
 	}
 	t.Fatalf("daemon API did not become ready: %v", lastErr)
+}
+
+func waitForDaemonPeerHandshake(t *testing.T, publicKey string) {
+	t.Helper()
+	var lastErr error
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
+		var status struct {
+			Peers []struct {
+				PublicKey    string `json:"public_key"`
+				HasHandshake bool   `json:"has_handshake"`
+			} `json:"peers"`
+		}
+		if code := daemonJSON(t, http.MethodGet, "/v1/status", nil, &status); code != http.StatusOK {
+			lastErr = fmt.Errorf("status %d", code)
+			continue
+		}
+		for _, peer := range status.Peers {
+			if peer.PublicKey == publicKey && peer.HasHandshake {
+				return
+			}
+		}
+		lastErr = fmt.Errorf("peer %s has no handshake yet", publicKey)
+	}
+	t.Fatalf("daemon peer handshake not ready: %v", lastErr)
 }
 
 func assertDaemonPeer(t *testing.T, publicKey string) {

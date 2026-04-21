@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeftRight, LogOut, Plus, Radio, Settings, ShieldAlert, Smartphone, User, Users } from 'lucide-react';
+import { ArrowLeftRight, LogOut, Plus, Radio, RadioTower, Settings, ShieldAlert, Smartphone, User, Users } from 'lucide-react';
 import { api } from '../lib/api';
 import AddPeerModal from './AddPeerModal';
 import ConfigModal from './ConfigModal';
@@ -8,6 +8,7 @@ import UsersTab from './UsersTab';
 import ACLsTab from './ACLsTab';
 import SettingsTab from './SettingsTab';
 import TransportsTab from './TransportsTab';
+import TurnTab from './TurnTab';
 import ForwardsTab from './ForwardsTab';
 import ProfileTab from './ProfileTab';
 import ThemeToggle from './ThemeToggle';
@@ -17,6 +18,7 @@ const tabs = [
   { id: 'profile',    label: 'Profile',    icon: User,          adminOnly: false },
   { id: 'acls',       label: 'ACLs',       icon: ShieldAlert,   adminOnly: true },
   { id: 'transports', label: 'Transports', icon: Radio,         adminOnly: true },
+  { id: 'turn',       label: 'TURN',       icon: RadioTower,    adminOnly: true },
   { id: 'forwards',   label: 'Forwards',   icon: ArrowLeftRight, adminOnly: true },
   { id: 'users',      label: 'Users',      icon: Users,         adminOnly: true },
   { id: 'settings',   label: 'Settings',   icon: Settings,      adminOnly: true },
@@ -122,6 +124,7 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
         {activeTab === 'profile'    && <ProfileTab />}
         {activeTab === 'acls'       && <ACLsTab />}
         {activeTab === 'transports' && <TransportsTab />}
+        {activeTab === 'turn'       && <TurnTab />}
         {activeTab === 'forwards'   && <ForwardsTab />}
         {activeTab === 'users'      && <UsersTab />}
         {activeTab === 'settings'   && <SettingsTab />}

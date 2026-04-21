@@ -19,6 +19,7 @@ export function buildWireGuardConfig({
   serverPublicKey,
   endpoint,
   transport,
+  transportProfile,
   presharedKey,
   keepalive,
   enableIPv6,
@@ -27,10 +28,19 @@ export function buildWireGuardConfig({
   directiveTURN,
   directiveSkipVerifyTLS,
   directiveURL,
+  directiveControl,
+  peerSyncEnabled,
   distributePeers,
 }) {
   const displayIPs = enableIPv6 === 'true' ? assignedIPs : filterIPv6FromList(assignedIPs);
   const allowedIPs = customAllowedIPs || '0.0.0.0/0, ::/0';
+
+  const selectedTransport = transportProfile || {};
+  const resolvedEndpoint = selectedTransport.endpoint || endpoint;
+  const resolvedTransport = selectedTransport.transport ?? transport;
+  const resolvedDirectiveTCP = selectedTransport.directive_tcp ?? directiveTCP;
+  const resolvedDirectiveTURN = selectedTransport.directive_turn ?? directiveTURN;
+  const resolvedDirectiveURL = selectedTransport.directive_url ?? directiveURL;
 
   const lines = [
     '[Interface]',
@@ -40,28 +50,31 @@ export function buildWireGuardConfig({
     `MTU = ${mtu || '1420'}`,
   ];
 
-  if (directiveTURN) {
-    lines.push(`#!TURN=${directiveTURN}`);
+  if (resolvedDirectiveTURN) {
+    lines.push(`#!TURN=${resolvedDirectiveTURN}`);
   }
 
   lines.push('', '[Peer]',
     `PublicKey = ${serverPublicKey}`,
-    `Endpoint = ${endpoint}`,
+    `Endpoint = ${resolvedEndpoint}`,
     `AllowedIPs = ${allowedIPs}`,
   );
 
-  if (transport && transport !== 'udp') {
-    lines.push(`Transport = ${transport}`);
+  if (resolvedTransport && resolvedTransport !== 'udp') {
+    lines.push(`Transport = ${resolvedTransport}`);
   }
 
-  if (directiveTCP && directiveTCP !== 'no') {
-    lines.push(`#!TCP=${directiveTCP}`);
+  if (resolvedDirectiveTCP && resolvedDirectiveTCP !== 'no') {
+    lines.push(`#!TCP=${resolvedDirectiveTCP}`);
   }
   if (directiveSkipVerifyTLS === 'yes') {
     lines.push('#!SkipVerifyTLS=yes');
   }
-  if (directiveURL) {
-    lines.push(`#!URL=${directiveURL}`);
+  if (resolvedDirectiveURL) {
+    lines.push(`#!URL=${resolvedDirectiveURL}`);
+  }
+  if (peerSyncEnabled && directiveControl) {
+    lines.push(`#!Control=${directiveControl}`);
   }
 
   if (presharedKey) {
@@ -84,6 +97,13 @@ export function buildWireGuardConfig({
   }
 
   return lines.join('\n');
+}
+
+export function stripWGDirectives(config) {
+  return String(config || '')
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('#!'))
+    .join('\n');
 }
 
 export function sanitizeConfigFilename(name) {
