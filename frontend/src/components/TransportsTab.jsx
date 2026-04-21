@@ -49,7 +49,11 @@ function needsTurn(base) {
 }
 
 function turnUsesTLS(base, protocol) {
-  return base === 'turn' && ['tls', 'dtls'].includes(protocol);
+  return base === 'turn' && ['tls', 'dtls', 'https', 'quic'].includes(protocol);
+}
+
+function turnUsesWebSocketOptions(base, protocol) {
+  return base === 'turn' && ['http', 'https', 'quic'].includes(protocol);
 }
 
 function needsWebSocket(base) {
@@ -248,7 +252,7 @@ export default function TransportsTab() {
               className={INPUT}
               value={form.external_endpoint}
               onChange={(e) => set('external_endpoint', e.target.value)}
-              placeholder={needsTurn(form.base) ? 'turn+udp://user:pass@turn.example.com:3478' : needsWebSocket(form.base) || form.base === 'url' ? 'https://vpn.example.com/wg' : 'vpn.example.com:51820'}
+              placeholder={needsTurn(form.base) ? `turn+${form.turn_protocol || 'udp'}://user:pass@turn.example.com:${['tls', 'https', 'quic'].includes(form.turn_protocol) ? '443' : '3478'}${turnUsesWebSocketOptions(form.base, form.turn_protocol) ? '/turn' : ''}` : needsWebSocket(form.base) || form.base === 'url' ? 'https://vpn.example.com/wg' : 'vpn.example.com:51820'}
             />
           </label>
 
@@ -273,7 +277,7 @@ export default function TransportsTab() {
                 <label className={LABEL}>
                   TURN Protocol
                   <select className={SELECT} value={form.turn_protocol} onChange={(e) => set('turn_protocol', e.target.value)}>
-                    {['udp', 'tcp', 'tls', 'dtls'].map((protocol) => <option key={protocol} value={protocol}>{protocol}</option>)}
+                    {['udp', 'tcp', 'tls', 'dtls', 'http', 'https', 'quic'].map((protocol) => <option key={protocol} value={protocol}>{protocol}</option>)}
                   </select>
                 </label>
                 <label className={LABEL}>
@@ -305,11 +309,11 @@ export default function TransportsTab() {
           )}
 
           {/* WebSocket options */}
-          {needsWebSocket(form.base) && (
+          {(needsWebSocket(form.base) || turnUsesWebSocketOptions(form.base, form.turn_protocol)) && (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <label className={LABEL}>
                 WS Path
-                <input className={INPUT} value={form.ws_path} onChange={(e) => set('ws_path', e.target.value)} placeholder="/" />
+                <input className={INPUT} value={form.ws_path} onChange={(e) => set('ws_path', e.target.value)} placeholder={turnUsesWebSocketOptions(form.base, form.turn_protocol) ? '/turn' : '/'} />
               </label>
               <label className={LABEL}>
                 Connect Host

@@ -174,6 +174,32 @@ func TestBuildClientTransportProfilesIncludesPreferredAndSocket(t *testing.T) {
 	}
 }
 
+func TestBuildClientTransportProfilesIncludesTURNHTTPSPath(t *testing.T) {
+	setupTestDB(t)
+	setTestConfig(t, "server_endpoint", "vpn.example.com:51820")
+	if err := gdb.Create(&TransportConfig{
+		Name:             "turn-web",
+		Base:             "turn",
+		TurnServer:       "turn.example.com:443",
+		TurnUsername:     "alice",
+		TurnPassword:     "secret",
+		TurnProtocol:     "https",
+		Listen:           false,
+		ListenPort:       0,
+		ExternalEndpoint: "",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	profiles := buildClientTransportProfiles("")
+	if len(profiles) != 1 {
+		t.Fatalf("profiles len=%d want 1: %+v", len(profiles), profiles)
+	}
+	if got := profiles[0].DirectiveTURN; got != "turn+https://alice:secret@turn.example.com:443/turn" {
+		t.Fatalf("unexpected TURN directive %q", got)
+	}
+}
+
 func TestAdvanceBySubnetIPv4UsesPrefixBlockSize(t *testing.T) {
 	start := netip.MustParseAddr("100.100.0.0")
 	if got := advanceBySubnet(start, 22); got.String() != "100.100.4.0" {

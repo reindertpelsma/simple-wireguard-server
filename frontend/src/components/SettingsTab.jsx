@@ -340,7 +340,7 @@ export default function SettingsTab() {
             <input
               type="text"
               className="input-field"
-              placeholder="turn+tls://user:pass@turn.example.com:443"
+              placeholder="turn+https://user:pass@turn.example.com:443/turn"
               value={config.client_config_turn_url || ''}
               onChange={(e) => setConfig({ ...config, client_config_turn_url: e.target.value })}
             />

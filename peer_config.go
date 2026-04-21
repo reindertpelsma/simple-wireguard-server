@@ -290,10 +290,15 @@ func advertisedTurnURL(t TransportConfig) string {
 	switch proto {
 	case "", "udp":
 		proto = "turn"
-	case "tcp", "tls", "dtls":
+	case "tcp", "tls", "dtls", "http", "https", "quic":
 		proto = "turn+" + proto
 	default:
 		proto = "turn+" + proto
+	}
+	path := ""
+	switch strings.TrimPrefix(proto, "turn+") {
+	case "http", "https", "quic":
+		path = "/turn"
 	}
 	user := strings.TrimSpace(t.TurnUsername)
 	pass := strings.TrimSpace(t.TurnPassword)
@@ -302,12 +307,13 @@ func advertisedTurnURL(t TransportConfig) string {
 		pass = strings.TrimSpace(t.ProxyPassword)
 	}
 	if user == "" {
-		return proto + "://" + server
+		return proto + "://" + server + path
 	}
 	u := &url.URL{
 		Scheme: proto,
 		User:   url.UserPassword(user, pass),
 		Host:   server,
+		Path:   path,
 	}
 	return u.String()
 }
@@ -338,6 +344,10 @@ func endpointFromURL(raw string) string {
 		return net.JoinHostPort(host, "80")
 	case "quic":
 		return net.JoinHostPort(host, "443")
+	case "turn+https", "turn+tls", "turn+quic", "turns":
+		return net.JoinHostPort(host, "443")
+	case "turn+http", "turn+tcp", "turn+udp", "turn+dtls", "turn":
+		return net.JoinHostPort(host, "3478")
 	default:
 		return host
 	}

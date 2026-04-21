@@ -286,7 +286,7 @@ type TransportConfig struct {
 	TurnUsername           string `json:"turn_username,omitempty"`
 	TurnPassword           string `json:"turn_password,omitempty"`
 	TurnRealm              string `json:"turn_realm,omitempty"`
-	TurnProtocol           string `json:"turn_protocol,omitempty"`
+	TurnProtocol           string `json:"turn_protocol,omitempty"` // udp|tcp|tls|dtls|http|https|quic
 	TurnNoCreatePermission bool   `json:"turn_no_create_permission,omitempty"`
 	TurnIncludeWGPublicKey bool   `json:"turn_include_wg_public_key,omitempty"`
 	TurnPermissions        string `json:"turn_permissions,omitempty"` // comma-separated
