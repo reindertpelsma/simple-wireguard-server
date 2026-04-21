@@ -252,7 +252,7 @@ export default function TransportsTab() {
               className={INPUT}
               value={form.external_endpoint}
               onChange={(e) => set('external_endpoint', e.target.value)}
-              placeholder={needsTurn(form.base) ? `turn+${form.turn_protocol || 'udp'}://user:pass@turn.example.com:${['tls', 'https', 'quic'].includes(form.turn_protocol) ? '443' : '3478'}${turnUsesWebSocketOptions(form.base, form.turn_protocol) ? '/turn' : ''}` : needsWebSocket(form.base) || form.base === 'url' ? 'https://vpn.example.com/wg' : 'vpn.example.com:51820'}
+              placeholder={needsTurn(form.base) ? `${form.turn_protocol || 'udp'}://user:pass@turn.example.com:${['tls', 'https', 'quic'].includes(form.turn_protocol) ? '443' : '3478'}${turnUsesWebSocketOptions(form.base, form.turn_protocol) ? '/turn' : ''}` : needsWebSocket(form.base) || form.base === 'url' ? 'https://vpn.example.com/wg' : 'vpn.example.com:51820'}
             />
           </label>
 

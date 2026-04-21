@@ -195,7 +195,7 @@ func TestBuildClientTransportProfilesIncludesTURNHTTPSPath(t *testing.T) {
 	if len(profiles) != 1 {
 		t.Fatalf("profiles len=%d want 1: %+v", len(profiles), profiles)
 	}
-	if got := profiles[0].DirectiveTURN; got != "turn+https://alice:secret@turn.example.com:443/turn" {
+	if got := profiles[0].DirectiveTURN; got != "https://alice:secret@turn.example.com:443/turn" {
 		t.Fatalf("unexpected TURN directive %q", got)
 	}
 }

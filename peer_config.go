@@ -289,14 +289,13 @@ func advertisedTurnURL(t TransportConfig) string {
 	proto := strings.ToLower(strings.TrimSpace(t.TurnProtocol))
 	switch proto {
 	case "", "udp":
-		proto = "turn"
+		proto = "udp"
 	case "tcp", "tls", "dtls", "http", "https", "quic":
-		proto = "turn+" + proto
 	default:
-		proto = "turn+" + proto
+		proto = strings.TrimPrefix(proto, "turn+")
 	}
 	path := ""
-	switch strings.TrimPrefix(proto, "turn+") {
+	switch proto {
 	case "http", "https", "quic":
 		path = "/turn"
 	}
@@ -338,15 +337,11 @@ func endpointFromURL(raw string) string {
 		return host
 	}
 	switch strings.ToLower(u.Scheme) {
-	case "https", "wss":
+	case "https", "wss", "quic", "turn+https", "turn+tls", "turn+quic", "turns":
 		return net.JoinHostPort(host, "443")
 	case "http", "ws":
 		return net.JoinHostPort(host, "80")
-	case "quic":
-		return net.JoinHostPort(host, "443")
-	case "turn+https", "turn+tls", "turn+quic", "turns":
-		return net.JoinHostPort(host, "443")
-	case "turn+http", "turn+tcp", "turn+udp", "turn+dtls", "turn":
+	case "turn+http", "turn+tcp", "turn+udp", "turn+dtls", "turn", "tcp", "udp", "tls", "dtls":
 		return net.JoinHostPort(host, "3478")
 	default:
 		return host
