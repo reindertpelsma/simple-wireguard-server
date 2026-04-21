@@ -11,8 +11,10 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,6 +43,7 @@ func TestIntegrationManagedDaemonRuntimeAndProxy(t *testing.T) {
 	setTestConfig(t, "yaml_http_port", fmt.Sprint(httpProxyPort))
 	setTestConfig(t, "yaml_socks5_port", fmt.Sprint(freeIntegrationTCPPort(t)))
 	setTestConfig(t, "http_proxy_access_enabled", "true")
+	setTestConfig(t, "e2e_encryption_enabled", "false")
 	setTestConfig(t, "acl_outbound_default", "deny")
 	setTestConfig(t, "acl_relay_default", "deny")
 	setTestConfig(t, "yaml_l3_forwarding", "true")
@@ -123,6 +126,140 @@ func TestIntegrationManagedDaemonRuntimeAndProxy(t *testing.T) {
 	assertProxyCONNECT(t, ui.URL, fmt.Sprintf("%s:%d", assignedIPv4, clientEchoPort), "blocked", "", http.StatusForbidden)
 }
 
+func TestIntegrationUISmokeLoginConfigAndProxy(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	requireUDPPort(t, 51820)
+
+	daemonBin := buildIntegrationUwgsocks(t)
+	apiPort := freeIntegrationTCPPort(t)
+	httpProxyPort := freeIntegrationTCPPort(t)
+	dataDir := t.TempDir()
+	setupIntegrationGlobals(t, dataDir, daemonBin, fmt.Sprintf("http://127.0.0.1:%d", apiPort), "integration-token")
+	setupTestDB(t)
+	ensureDefaultTransport()
+	setTestConfig(t, "enable_client_ipv6", "false")
+	setTestConfig(t, "yaml_http_port", fmt.Sprint(httpProxyPort))
+	setTestConfig(t, "yaml_socks5_port", fmt.Sprint(freeIntegrationTCPPort(t)))
+	setTestConfig(t, "http_proxy_access_enabled", "true")
+	setTestConfig(t, "acl_outbound_default", "deny")
+	setTestConfig(t, "acl_relay_default", "deny")
+	setTestConfig(t, "yaml_l3_forwarding", "true")
+
+	user, _ := createTestUser(t, "integration-admin", true)
+	user.Tags = "staff"
+	if err := gdb.Save(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	hash, _ := hashPassword("proxy-secret")
+	if err := gdb.Create(&AccessProxyCredential{UserID: user.ID, Username: "proxy-user", PasswordHash: hash, Name: "integration", Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	generateCanonicalYAML()
+	if err := startManagedDaemon(); err != nil {
+		t.Fatalf("start managed daemon: %v", err)
+	}
+	t.Cleanup(func() { _ = stopManagedDaemon(5 * time.Second) })
+	waitForDaemonStatus(t)
+
+	ui := httptest.NewServer(buildIntegrationUIHandler())
+	defer ui.Close()
+
+	loginPageResp, err := http.Get(ui.URL + "/login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loginPage, _ := io.ReadAll(loginPageResp.Body)
+	_ = loginPageResp.Body.Close()
+	if loginPageResp.StatusCode != http.StatusOK || !bytes.Contains(loginPage, []byte("<form id=\"login-form\">")) {
+		t.Fatalf("login page status=%d body=%q", loginPageResp.StatusCode, loginPage)
+	}
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Jar: jar}
+	loginBody, _ := json.Marshal(map[string]string{
+		"username": "integration-admin",
+		"password": "password",
+	})
+	loginResp, err := client.Post(ui.URL+"/api/login", "application/json", bytes.NewReader(loginBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loginResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(loginResp.Body)
+		_ = loginResp.Body.Close()
+		t.Fatalf("login status=%d body=%q", loginResp.StatusCode, body)
+	}
+	_ = loginResp.Body.Close()
+	if len(jar.Cookies(mustURL(t, ui.URL))) == 0 {
+		t.Fatal("login did not set a session cookie")
+	}
+
+	createBody, _ := json.Marshal(map[string]interface{}{
+		"name":      "smoke-client",
+		"keepalive": 1,
+	})
+	createResp, err := client.Post(ui.URL+"/api/peers", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if createResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(createResp.Body)
+		_ = createResp.Body.Close()
+		t.Fatalf("create peer status=%d body=%q", createResp.StatusCode, body)
+	}
+	_ = createResp.Body.Close()
+
+	var peers []Peer
+	getJSONAs(t, client, ui.URL+"/api/peers", &peers)
+	if len(peers) != 1 || peers[0].Name != "smoke-client" {
+		t.Fatalf("unexpected peers after create: %+v", peers)
+	}
+	peerID := peers[0].ID
+	if peers[0].PublicKey == "" {
+		t.Fatalf("created peer missing public key: %+v", peers[0])
+	}
+	var dbPeer Peer
+	if err := gdb.First(&dbPeer, peerID).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	var publicCfg map[string]string
+	getJSONAs(t, client, ui.URL+"/api/config/public", &publicCfg)
+	if publicCfg["server_pubkey"] == "" || publicCfg["server_endpoint"] == "" {
+		t.Fatalf("public config missing endpoint material: %+v", publicCfg)
+	}
+
+	var privateCfg struct {
+		EncryptedPrivateKey string `json:"encrypted_private_key"`
+		PresharedKey        string `json:"preshared_key"`
+		AssignedIPs         string `json:"assigned_ips"`
+	}
+	getJSONAs(t, client, fmt.Sprintf("%s/api/peers/%d/private", ui.URL, peerID), &privateCfg)
+	if privateCfg.EncryptedPrivateKey == "" || privateCfg.AssignedIPs == "" {
+		t.Fatalf("peer private config incomplete: %+v", privateCfg)
+	}
+	assignedIPv4 := firstAssignedIPv4(t, privateCfg.AssignedIPs)
+	assertDaemonPeer(t, peers[0].PublicKey)
+
+	clientEchoPort := freeIntegrationTCPPort(t)
+	clientEchoTargetPort := freeIntegrationTCPPort(t)
+	stopClientEcho := startHostEcho(t, fmt.Sprintf("127.0.0.1:%d", clientEchoTargetPort), "client")
+	defer stopClientEcho()
+	clientLocalForwardPort := freeIntegrationTCPPort(t)
+	reversePort := 18092
+	stopClient := startIntegrationClientDaemon(t, daemonBin, dataDir, mustIntegrationKeyFromPrivate(t, privateCfg.EncryptedPrivateKey), dbPeer, assignedIPv4, clientEchoPort, clientEchoTargetPort, clientLocalForwardPort, reversePort)
+	defer stopClient()
+
+	allowStaffToClientEcho(t, assignedIPv4.String(), clientEchoPort)
+	assertProxyCONNECT(t, ui.URL, fmt.Sprintf("%s:%d", assignedIPv4, clientEchoPort), "smoke", "client:smoke\n", http.StatusOK)
+}
+
 func setupIntegrationGlobals(t *testing.T, dir, daemon, apiURL, token string) {
 	t.Helper()
 	oldDataDir, oldDaemon, oldURL, oldToken := *dataDir, *daemonPath, *uwgsocksURL, *uwgsocksToken
@@ -185,6 +322,19 @@ func createIntegrationPeer(t *testing.T, user User, publicKey string) Peer {
 		t.Fatal(err)
 	}
 	return peer
+}
+
+func buildIntegrationUIHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/login", handleLogin)
+	mux.HandleFunc("GET /api/peers", authMiddleware(handleGetPeers))
+	mux.HandleFunc("POST /api/peers", authMiddleware(handleCreatePeer))
+	mux.HandleFunc("GET /api/peers/{id}/private", authMiddleware(handleGetPeerPrivate))
+	mux.HandleFunc("GET /api/distribute-peers", authMiddleware(handleGetDistributePeers))
+	mux.HandleFunc("GET /api/config/public", authMiddleware(handleGetPublicConfig))
+	registerAccessProxyRoutes(mux)
+	registerFrontendRoutes(mux)
+	return wrapRootHandler(mux)
 }
 
 func startIntegrationClientDaemon(t *testing.T, daemonBin, dir string, key wgtypes.Key, peer Peer, assignedIPv4 netip.Addr, clientEchoPort, clientEchoTargetPort, localForwardPort, reversePort int) func() {
@@ -369,6 +519,40 @@ func assertProxyCONNECT(t *testing.T, uiURL, target, msg, want string, wantStatu
 	if got != want {
 		t.Fatalf("proxy echo = %q, want %q", got, want)
 	}
+}
+
+func getJSONAs(t *testing.T, client *http.Client, rawURL string, out interface{}) {
+	t.Helper()
+	resp, err := client.Get(rawURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("GET %s status=%d body=%q", rawURL, resp.StatusCode, body)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		t.Fatalf("decode %s: %v", rawURL, err)
+	}
+}
+
+func mustIntegrationKeyFromPrivate(t *testing.T, raw string) wgtypes.Key {
+	t.Helper()
+	key, err := wgtypes.ParseKey(strings.TrimSpace(raw))
+	if err != nil {
+		t.Fatalf("parse private key: %v", err)
+	}
+	return key
+}
+
+func mustURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse url %q: %v", raw, err)
+	}
+	return u
 }
 
 func writeReadLine(conn net.Conn, msg string) (string, error) {
