@@ -91,6 +91,6 @@ if [ "$OS" == "linux" ]; then
 fi
 
 echo "Building uwgsocks-ui binary..."
-CGO_ENABLED=1 go build -ldflags="-s -w" -o uwgsocks-ui
+CGO_ENABLED=0 go build -ldflags="-s -w" -o uwgsocks-ui
 
 echo "Done! Run with: ./uwgsocks-ui -listen 0.0.0.0:8080"

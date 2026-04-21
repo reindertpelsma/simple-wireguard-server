@@ -62,7 +62,7 @@ if exist "frontend\" (
     echo Source frontend dir not found. Skipping frontend build ^(hope dist exists^).
 )
 
-
+set "CGO_ENABLED=0"
 go build -trimpath -ldflags="-s -w" -o uwgsocks-ui.exe
 if errorlevel 1 exit /b %errorlevel%
 

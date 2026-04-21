@@ -94,7 +94,7 @@ jobs:
 
       - name: Build uwgsocks-ui
         env:
-          CGO_ENABLED: 1
+          CGO_ENABLED: 0
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CC: ${{ matrix.cc }}
