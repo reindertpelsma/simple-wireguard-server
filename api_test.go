@@ -119,6 +119,25 @@ func TestPrimaryGroupSubnetAllocationAndPeerGroupInheritance(t *testing.T) {
 	}
 }
 
+func TestBuildClientConfigTextAddsControlDirectiveForPeerSyncPeer(t *testing.T) {
+	setupTestDB(t)
+	setTestConfig(t, "peer_sync_mode", "opt_in")
+	setTestConfig(t, "peer_sync_port", "28765")
+	setTestConfig(t, "client_dns", "100.64.0.1")
+	peer := Peer{Name: "laptop", AssignedIPs: "100.64.0.2/32", PeerSyncEnabled: true}
+
+	cfg := buildClientConfigText(peer, "priv", "psk", true)
+	if !strings.Contains(cfg, "#!Control=http://100.64.0.1:28765") {
+		t.Fatalf("client config missing control directive:\n%s", cfg)
+	}
+
+	peer.PeerSyncEnabled = false
+	cfg = buildClientConfigText(peer, "priv", "psk", true)
+	if strings.Contains(cfg, "#!Control=") {
+		t.Fatalf("client config unexpectedly contained control directive for non-opt-in peer:\n%s", cfg)
+	}
+}
+
 func TestAdvanceBySubnetIPv4UsesPrefixBlockSize(t *testing.T) {
 	start := netip.MustParseAddr("100.100.0.0")
 	if got := advanceBySubnet(start, 22); got.String() != "100.100.4.0" {

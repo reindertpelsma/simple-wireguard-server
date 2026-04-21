@@ -78,6 +78,25 @@ func TestSocketProxyTransportYAML(t *testing.T) {
 	}
 }
 
+func TestPeerSyncControlServerYAML(t *testing.T) {
+	setupTestDB(t)
+	setTestConfig(t, "peer_sync_mode", "opt_in")
+	setTestConfig(t, "peer_sync_port", "28765")
+	setTestConfig(t, "client_dns", "100.64.0.1")
+	yml := string(buildCanonicalYAMLBytes(false))
+	for _, want := range []string{"mesh_control:", "listen: 100.64.0.1:28765"} {
+		if !strings.Contains(yml, want) {
+			t.Fatalf("generated YAML missing %q:\n%s", want, yml)
+		}
+	}
+
+	setTestConfig(t, "peer_sync_mode", "disabled")
+	yml = string(buildCanonicalYAMLBytes(false))
+	if strings.Contains(yml, "mesh_control:") {
+		t.Fatalf("mesh_control should be absent when peer syncing is disabled:\n%s", yml)
+	}
+}
+
 func TestServiceAuthFlowAndCORSGuard(t *testing.T) {
 	setupTestDB(t)
 	_, token := createTestUser(t, "admin", true)

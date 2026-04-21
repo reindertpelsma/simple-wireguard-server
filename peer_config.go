@@ -15,6 +15,7 @@ var publicConfigKeys = []string{
 	"client_config_turn_url",
 	"client_config_skipverifytls",
 	"client_config_url",
+	"peer_sync_mode",
 	"default_transport",
 	"e2e_encryption_enabled",
 	"enable_client_ipv6",
@@ -31,6 +32,7 @@ func publicConfigMap() map[string]string {
 	configs := configMapForKeys(publicConfigKeys)
 	configs["server_endpoint"] = resolvedServerEndpoint()
 	configs["default_transport"] = resolveDefaultTransportNameUI()
+	configs["client_config_control_url"] = resolvedPeerSyncControlURL()
 	return configs
 }
 
@@ -54,6 +56,38 @@ func configMapForKeys(keys []string) map[string]string {
 
 func peerHasPrivateKeyMaterial(peer Peer) bool {
 	return strings.TrimSpace(peer.PrivateKey) != "" || strings.TrimSpace(peer.EncryptedPrivateKey) != ""
+}
+
+func peerSyncMode() string {
+	switch strings.TrimSpace(getConfig("peer_sync_mode")) {
+	case "enabled", "opt_in":
+		return strings.TrimSpace(getConfig("peer_sync_mode"))
+	default:
+		return "disabled"
+	}
+}
+
+func peerSyncActiveForPeer(peer Peer) bool {
+	switch peerSyncMode() {
+	case "enabled":
+		return true
+	case "opt_in":
+		return peer.PeerSyncEnabled
+	default:
+		return false
+	}
+}
+
+func resolvedPeerSyncControlURL() string {
+	if peerSyncMode() == "disabled" {
+		return ""
+	}
+	host := strings.TrimSpace(getConfig("client_dns"))
+	port := strings.TrimSpace(getConfig("peer_sync_port"))
+	if host == "" || port == "" {
+		return ""
+	}
+	return "http://" + host + ":" + port
 }
 
 func configDownloadName(name string) string {
@@ -132,6 +166,11 @@ func buildClientConfigText(peer Peer, privateKey, presharedKey string, revealEnd
 	}
 	if u := strings.TrimSpace(getConfig("client_config_url")); u != "" {
 		lines = append(lines, fmt.Sprintf("#!URL=%s", u))
+	}
+	if peerSyncActiveForPeer(peer) {
+		if control := resolvedPeerSyncControlURL(); control != "" {
+			lines = append(lines, fmt.Sprintf("#!Control=%s", control))
+		}
 	}
 
 	if presharedKey != "" {

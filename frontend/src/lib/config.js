@@ -27,6 +27,8 @@ export function buildWireGuardConfig({
   directiveTURN,
   directiveSkipVerifyTLS,
   directiveURL,
+  directiveControl,
+  peerSyncEnabled,
   distributePeers,
 }) {
   const displayIPs = enableIPv6 === 'true' ? assignedIPs : filterIPv6FromList(assignedIPs);
@@ -63,6 +65,9 @@ export function buildWireGuardConfig({
   if (directiveURL) {
     lines.push(`#!URL=${directiveURL}`);
   }
+  if (peerSyncEnabled && directiveControl) {
+    lines.push(`#!Control=${directiveControl}`);
+  }
 
   if (presharedKey) {
     lines.push(`PresharedKey = ${presharedKey}`);
@@ -84,6 +89,13 @@ export function buildWireGuardConfig({
   }
 
   return lines.join('\n');
+}
+
+export function stripWGDirectives(config) {
+  return String(config || '')
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('#!'))
+    .join('\n');
 }
 
 export function sanitizeConfigFilename(name) {

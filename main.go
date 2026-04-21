@@ -214,6 +214,8 @@ type Peer struct {
 	// Distribute peer: when true, this peer is included in all other clients' configs
 	IsDistribute       bool   `gorm:"default:false" json:"is_distribute"`
 	DistributeEndpoint string `json:"distribute_endpoint,omitempty"` // endpoint advertised to other clients; auto-updated from last-seen IP
+	MeshTrust          string `gorm:"default:'untrusted'" json:"mesh_trust,omitempty"`
+	PeerSyncEnabled    bool   `gorm:"default:false" json:"peer_sync_enabled"`
 	// Stats from uwgsocks (volatile)
 	LastHandshakeTime     string             `gorm:"-" json:"last_handshake_time,omitempty"`
 	TransmitBytes         uint64             `gorm:"-" json:"transmit_bytes"`
@@ -761,6 +763,17 @@ type SecretsConfig struct {
 	HMACSecretHex    string `json:"hmac_secret_hex"`
 }
 
+func randomInt(min, max int) int {
+	if max <= min {
+		return min
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(max-min)))
+	if err != nil {
+		return min
+	}
+	return min + int(n.Int64())
+}
+
 func initGlobalSettings() {
 	secretsPath := resolvePath("wgui_secrets.json")
 	var secrets SecretsConfig
@@ -823,7 +836,8 @@ func initGlobalSettings() {
 		"enable_client_ipv6":       ipv6Default,
 		"public_keys_visible":      "false",
 		"endpoints_visible":        "false",
-		"p2p_routing_enabled":      "true",
+		"peer_sync_mode":           "disabled",
+		"peer_sync_port":           strconv.Itoa(randomInt(20000, 60000)),
 		"allow_custom_private_key": "true",
 		"e2e_encryption_enabled":   "true",
 		"global_mtu":               "1420",
@@ -1133,6 +1147,7 @@ func handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 		Keepalive           int        `json:"keepalive"`
 		StaticEndpoint      string     `json:"static_endpoint,omitempty"`
 		IsManualKey         bool       `json:"is_manual_key"`
+		PeerSyncEnabled     bool       `json:"peer_sync_enabled"`
 		ExpiresAt           *time.Time `json:"expires_at,omitempty"`
 		TrafficShaper       struct {
 			UploadBps     int64 `json:"upload_bps"`
@@ -1204,11 +1219,13 @@ func handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 		Keepalive:           req.Keepalive,
 		IsManualKey:         req.IsManualKey,
 		StaticEndpoint:      req.StaticEndpoint,
+		PeerSyncEnabled:     req.PeerSyncEnabled,
 		ExpiresAt:           req.ExpiresAt,
 		Enabled:             true,
 		TrafficUploadBps:    req.TrafficShaper.UploadBps,
 		TrafficDownloadBps:  req.TrafficShaper.DownloadBps,
 		TrafficLatencyMs:    req.TrafficShaper.LatencyMillis,
+		MeshTrust:           "untrusted",
 	}
 
 	if err := gdb.Create(&peer).Error; err != nil {
@@ -1478,6 +1495,8 @@ func handleUpdatePeer(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt          *time.Time `json:"expires_at"`
 		IsDistribute       *bool      `json:"is_distribute"`
 		DistributeEndpoint *string    `json:"distribute_endpoint"`
+		MeshTrust          *string    `json:"mesh_trust"`
+		PeerSyncEnabled    *bool      `json:"peer_sync_enabled"`
 		TrafficShaper      *struct {
 			UploadBps     int64 `json:"upload_bps"`
 			DownloadBps   int64 `json:"download_bps"`
@@ -1518,6 +1537,22 @@ func handleUpdatePeer(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.DistributeEndpoint != nil && isAdmin {
 		peer.DistributeEndpoint = *req.DistributeEndpoint
+	}
+	if req.MeshTrust != nil && isAdmin {
+		switch strings.TrimSpace(*req.MeshTrust) {
+		case "", "untrusted", "trusted_always", "trusted_if_dynamic_acls":
+			if strings.TrimSpace(*req.MeshTrust) == "" {
+				peer.MeshTrust = "untrusted"
+			} else {
+				peer.MeshTrust = strings.TrimSpace(*req.MeshTrust)
+			}
+		default:
+			http.Error(w, "invalid mesh_trust", http.StatusBadRequest)
+			return
+		}
+	}
+	if req.PeerSyncEnabled != nil && isAdmin {
+		peer.PeerSyncEnabled = *req.PeerSyncEnabled
 	}
 	if req.TrafficShaper != nil && isAdmin {
 		peer.TrafficUploadBps = req.TrafficShaper.UploadBps
@@ -2827,6 +2862,16 @@ func pushPeerToDaemon(peer Peer) {
 	if peer.StaticEndpoint != "" {
 		payload["endpoint"] = peer.StaticEndpoint
 	}
+	if peerSyncActiveForPeer(peer) {
+		if control := resolvedPeerSyncControlURL(); control != "" {
+			payload["control_url"] = control
+			payload["mesh_enabled"] = true
+			payload["mesh_accept_acls"] = true
+		}
+	}
+	if peerSyncMode() != "disabled" && strings.TrimSpace(peer.MeshTrust) != "" && strings.TrimSpace(peer.MeshTrust) != "untrusted" {
+		payload["mesh_trust"] = strings.TrimSpace(peer.MeshTrust)
+	}
 	if peer.TrafficUploadBps > 0 || peer.TrafficDownloadBps > 0 || peer.TrafficLatencyMs > 0 {
 		payload["traffic_shaper"] = map[string]interface{}{
 			"upload_bps":   peer.TrafficUploadBps,
@@ -3197,6 +3242,11 @@ func buildCanonicalYAMLBytes(applyCustom bool) []byte {
 		"dns_server": map[string]interface{}{
 			"listen": getConfig("client_dns") + ":53",
 		},
+	}
+	if control := resolvedPeerSyncControlURL(); control != "" {
+		managed["mesh_control"] = map[string]interface{}{
+			"listen": strings.TrimPrefix(control, "http://"),
+		}
 	}
 
 	// host_forward: enabled when redirect IP is non-empty

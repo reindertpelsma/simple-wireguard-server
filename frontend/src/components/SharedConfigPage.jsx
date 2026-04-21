@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Copy, Download, Loader2, ShieldCheck } from 'lucide-react';
 import { api } from '../lib/api';
 import { decryptPrivateKey, hashNonce } from '../lib/crypto';
-import { buildWireGuardConfig, downloadConfigFile } from '../lib/config';
+import { buildWireGuardConfig, downloadConfigFile, stripWGDirectives } from '../lib/config';
 import ThemeToggle from './ThemeToggle';
 
 export default function SharedConfigPage({ token, theme, onToggleTheme }) {
@@ -11,6 +11,7 @@ export default function SharedConfigPage({ token, theme, onToggleTheme }) {
   const [message, setMessage] = useState('');
   const [meta, setMeta] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [simpleView, setSimpleView] = useState(false);
   const loadedTokenRef = useRef('');
 
   useEffect(() => {
@@ -54,6 +55,8 @@ export default function SharedConfigPage({ token, theme, onToggleTheme }) {
           directiveTURN: shared.client_config_turn_url,
           directiveSkipVerifyTLS: shared.client_config_skipverifytls,
           directiveURL: shared.client_config_url,
+          directiveControl: shared.client_config_control_url,
+          peerSyncEnabled: !!shared.peer_sync_enabled,
           distributePeers: shared.distribute_peers,
         });
 
@@ -77,10 +80,13 @@ export default function SharedConfigPage({ token, theme, onToggleTheme }) {
   }, [token]);
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(config);
+    await navigator.clipboard.writeText(simpleView ? stripWGDirectives(config) : config);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
   };
+
+  const displayedConfig = simpleView ? stripWGDirectives(config) : config;
+  const hasDirectiveLines = config.includes('#!');
 
   return (
     <div className="app-shell px-4 py-6 sm:px-6">
@@ -146,18 +152,24 @@ export default function SharedConfigPage({ token, theme, onToggleTheme }) {
                   <p className="text-sm text-[var(--muted)]">Downloads with a `.conf` filename for direct import into WireGuard clients.</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  {hasDirectiveLines && (
+                    <label className="ghost-button gap-2">
+                      <input type="checkbox" checked={simpleView} onChange={(event) => setSimpleView(event.target.checked)} />
+                      <span>Show simple config only</span>
+                    </label>
+                  )}
                   <button type="button" onClick={handleCopy} className="secondary-button">
                     <Copy size={16} />
                     <span>{copied ? 'Copied' : 'Copy'}</span>
                   </button>
-                  <button type="button" onClick={() => downloadConfigFile(meta.download_name, config)} className="primary-button">
+                  <button type="button" onClick={() => downloadConfigFile(meta.download_name, displayedConfig)} className="primary-button">
                     <Download size={16} />
                     <span>Download `.conf`</span>
                   </button>
                 </div>
               </div>
 
-              <pre className="config-block">{config}</pre>
+              <pre className="config-block">{displayedConfig}</pre>
             </div>
           )}
         </div>

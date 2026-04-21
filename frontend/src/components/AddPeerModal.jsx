@@ -14,6 +14,7 @@ export default function AddPeerModal({ onClose, onSuccess }) {
   const [keepalive, setKeepalive] = useState('');
   const [requestedIP, setRequestedIP] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
+  const [peerSyncEnabled, setPeerSyncEnabled] = useState(false);
 
   useEffect(() => {
     api.getPublicConfig().then(setGlobalConfig).catch(() => {});
@@ -51,6 +52,7 @@ export default function AddPeerModal({ onClose, onSuccess }) {
         requested_ip: requestedIP.trim(),
         keepalive: Number.isNaN(keepaliveValue) ? 0 : keepaliveValue,
         static_endpoint: staticEndpoint.trim(),
+        peer_sync_enabled: peerSyncEnabled,
         is_manual_key: Boolean(publicKey && manualPublicKey.trim()),
         expires_at: expiresAt ? new Date(expiresAt).toISOString() : null,
       });
@@ -68,6 +70,7 @@ export default function AddPeerModal({ onClose, onSuccess }) {
   };
 
   const showManualInput = globalConfig.allow_custom_private_key === 'true';
+  const peerSyncMode = globalConfig.peer_sync_mode || 'disabled';
 
   return (
     <div className="modal-backdrop">
@@ -179,6 +182,16 @@ export default function AddPeerModal({ onClose, onSuccess }) {
                   onChange={(event) => setExpiresAt(event.target.value)}
                 />
               </div>
+
+              {peerSyncMode === 'opt_in' && (
+                <div className="space-y-2 md:col-span-2">
+                  <label className="flex items-center gap-3 text-sm font-medium">
+                    <input type="checkbox" checked={peerSyncEnabled} onChange={(event) => setPeerSyncEnabled(event.target.checked)} />
+                    <span>Opt this client into peer syncing / P2P discovery</span>
+                  </label>
+                  <p className="text-xs text-[var(--muted)]">Adds the `#!Control=` directive for uwgsocks clients and allows this peer to use the tunnel-only peer sync controller.</p>
+                </div>
+              )}
             </div>
           )}
 

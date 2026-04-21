@@ -108,7 +108,7 @@ export default function SettingsTab() {
     }
   };
 
-  const directiveKeys = ['enable_client_ipv6', 'client_allowed_ips', 'client_config_tcp', 'client_config_turn_url', 'client_config_skipverifytls', 'client_config_url'];
+  const directiveKeys = ['enable_client_ipv6', 'client_allowed_ips', 'client_config_tcp', 'client_config_turn_url', 'client_config_skipverifytls', 'client_config_url', 'peer_sync_mode', 'peer_sync_port'];
   const accessKeys = ['trusted_proxy_cidrs', 'web_base_url', 'http_proxy_access_enabled', 'socket_proxy_enabled', 'socket_proxy_http_port', 'exposed_services_enabled', 'service_auth_cookie_seconds'];
   const explicitKeys = ['yaml_host_forward_redirect_ip'];
   const editableConfigEntries = Object.entries(config).filter(([key]) => !['custom_yaml', 'custom_yaml_enabled', ...directiveKeys, ...accessKeys, ...explicitKeys].includes(key));
@@ -298,6 +298,19 @@ export default function SettingsTab() {
               <option value="true">Enabled — allocate IPv6 addresses and include ::/0 in AllowedIPs</option>
               <option value="false">Disabled — IPv4 only</option>
             </select>
+          </div>
+          <div className="space-y-2 md:col-span-2">
+            <label className="field-label">Peer syncing / P2P discovery</label>
+            <select
+              className="input-field"
+              value={config.peer_sync_mode || 'disabled'}
+              onChange={(e) => setConfig({ ...config, peer_sync_mode: e.target.value })}
+            >
+              <option value="disabled">Disabled</option>
+              <option value="opt_in">Only clients that opt in</option>
+              <option value="enabled">Enabled for all clients</option>
+            </select>
+            <p className="text-xs text-[var(--muted)]">Runs a tunnel-only peer sync controller and adds `#!Control=` to downloaded configs for selected uwgsocks clients. It enables P2P discovery and multi-server peer syncing. Standard WireGuard clients safely ignore the directive.</p>
           </div>
           <div className="space-y-2">
             <label className="field-label">#!TCP directive</label>

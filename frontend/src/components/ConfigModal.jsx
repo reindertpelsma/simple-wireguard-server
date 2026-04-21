@@ -3,13 +3,14 @@ import { Check, Copy, Download, Loader2, QrCode, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { api } from '../lib/api';
 import { decryptPrivateKey, hashNonce } from '../lib/crypto';
-import { buildWireGuardConfig, downloadConfigFile } from '../lib/config';
+import { buildWireGuardConfig, downloadConfigFile, stripWGDirectives } from '../lib/config';
 
 export default function ConfigModal({ peer, onClose }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [config, setConfig] = useState('');
   const [copied, setCopied] = useState(false);
+  const [simpleView, setSimpleView] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -71,6 +72,8 @@ export default function ConfigModal({ peer, onClose }) {
           directiveTURN: globalConfig.client_config_turn_url,
           directiveSkipVerifyTLS: globalConfig.client_config_skipverifytls,
           directiveURL: globalConfig.client_config_url,
+          directiveControl: globalConfig.client_config_control_url,
+          peerSyncEnabled: !!peer.peer_sync_enabled || globalConfig.peer_sync_mode === 'enabled',
           distributePeers: myDistributePeers,
         });
 
@@ -95,10 +98,13 @@ export default function ConfigModal({ peer, onClose }) {
   }, [peer]);
 
   const copyToClipboard = async () => {
-    await navigator.clipboard.writeText(config);
+    await navigator.clipboard.writeText(simpleView ? stripWGDirectives(config) : config);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2000);
   };
+
+  const displayedConfig = simpleView ? stripWGDirectives(config) : config;
+  const hasDirectiveLines = config.includes('#!');
 
   return (
     <div className="modal-backdrop">
@@ -150,17 +156,23 @@ export default function ConfigModal({ peer, onClose }) {
                   </div>
 
                   <div className="flex flex-wrap gap-2">
+                    {hasDirectiveLines && (
+                      <label className="ghost-button gap-2">
+                        <input type="checkbox" checked={simpleView} onChange={(event) => setSimpleView(event.target.checked)} />
+                        <span>Show simple config only</span>
+                      </label>
+                    )}
                     <button type="button" onClick={copyToClipboard} className="secondary-button">
                       {copied ? <Check size={16} /> : <Copy size={16} />}
                       <span>{copied ? 'Copied' : 'Copy'}</span>
                     </button>
-                    <button type="button" onClick={() => downloadConfigFile(peer.name, config)} className="primary-button">
+                    <button type="button" onClick={() => downloadConfigFile(peer.name, displayedConfig)} className="primary-button">
                       <Download size={16} />
                       <span>Download `.conf`</span>
                     </button>
                   </div>
 
-                  <pre className="config-block">{config}</pre>
+                  <pre className="config-block">{displayedConfig}</pre>
                 </div>
               </div>
             </>
