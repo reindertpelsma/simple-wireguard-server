@@ -200,6 +200,82 @@ func TestBuildClientTransportProfilesIncludesTURNHTTPSPath(t *testing.T) {
 	}
 }
 
+func TestGetTransportsConfigIncludesWebSocketAdvertiseHTTP3(t *testing.T) {
+	setupTestDB(t)
+	if err := gdb.Create(&TransportConfig{
+		Name:             "edge-web",
+		Base:             "https",
+		Listen:           true,
+		ListenPort:       443,
+		WSPath:           "/wg",
+		ConnectHost:      "origin.internal:443",
+		HostHeader:       "vpn.example.com",
+		WSAdvertiseHTTP3: true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := getTransportsConfig()
+	if len(cfg) != 1 {
+		t.Fatalf("expected created transport only, got %d", len(cfg))
+	}
+
+	var found map[string]interface{}
+	for _, entry := range cfg {
+		if entry["name"] == "edge-web" {
+			found = entry
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("edge-web transport not found in config")
+	}
+	ws, ok := found["websocket"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("websocket block missing or wrong type: %#v", found["websocket"])
+	}
+	if got := ws["path"]; got != "/wg" {
+		t.Fatalf("unexpected websocket path %#v", got)
+	}
+	if got := ws["connect_host"]; got != "origin.internal:443" {
+		t.Fatalf("unexpected websocket connect_host %#v", got)
+	}
+	if got := ws["host_header"]; got != "vpn.example.com" {
+		t.Fatalf("unexpected websocket host_header %#v", got)
+	}
+	if got := ws["advertise_http3"]; got != true {
+		t.Fatalf("unexpected websocket advertise_http3 %#v", got)
+	}
+}
+
+func TestTransportConfigToAPIPayloadIncludesWebSocketAdvertiseHTTP3(t *testing.T) {
+	payload := transportConfigToAPIPayload(TransportConfig{
+		Name:             "edge-web",
+		Base:             "https",
+		Listen:           true,
+		WSPath:           "/wg",
+		ConnectHost:      "origin.internal:443",
+		HostHeader:       "vpn.example.com",
+		WSAdvertiseHTTP3: true,
+	})
+	ws, ok := payload["websocket"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("websocket block missing or wrong type: %#v", payload["websocket"])
+	}
+	if got := ws["path"]; got != "/wg" {
+		t.Fatalf("unexpected websocket path %#v", got)
+	}
+	if got := ws["connect_host"]; got != "origin.internal:443" {
+		t.Fatalf("unexpected websocket connect_host %#v", got)
+	}
+	if got := ws["host_header"]; got != "vpn.example.com" {
+		t.Fatalf("unexpected websocket host_header %#v", got)
+	}
+	if got := ws["advertise_http3"]; got != true {
+		t.Fatalf("unexpected websocket advertise_http3 %#v", got)
+	}
+}
+
 func TestAdvanceBySubnetIPv4UsesPrefixBlockSize(t *testing.T) {
 	start := netip.MustParseAddr("100.100.0.0")
 	if got := advanceBySubnet(start, 22); got.String() != "100.100.4.0" {

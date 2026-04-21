@@ -281,6 +281,7 @@ type TransportConfig struct {
 	WSPath           string `json:"ws_path,omitempty"`
 	ConnectHost      string `json:"connect_host,omitempty"`
 	HostHeader       string `json:"host_header,omitempty"`
+	WSAdvertiseHTTP3 bool   `json:"ws_advertise_http3,omitempty"`
 	// TURN base transport settings
 	TurnServer             string `json:"turn_server,omitempty"`
 	TurnUsername           string `json:"turn_username,omitempty"`
@@ -2384,7 +2385,7 @@ func getTransportsConfig() []map[string]interface{} {
 		if t.URL != "" {
 			m["url"] = t.URL
 		}
-		if t.WSPath != "" || t.ConnectHost != "" || t.HostHeader != "" {
+		if t.WSPath != "" || t.ConnectHost != "" || t.HostHeader != "" || t.WSAdvertiseHTTP3 {
 			ws := map[string]interface{}{}
 			if t.WSPath != "" {
 				ws["path"] = t.WSPath
@@ -2394,6 +2395,9 @@ func getTransportsConfig() []map[string]interface{} {
 			}
 			if t.HostHeader != "" {
 				ws["host_header"] = t.HostHeader
+			}
+			if t.WSAdvertiseHTTP3 {
+				ws["advertise_http3"] = true
 			}
 			m["websocket"] = ws
 		}
@@ -2922,13 +2926,19 @@ func transportConfigToAPIPayload(t TransportConfig) map[string]interface{} {
 	if t.URL != "" {
 		m["url"] = t.URL
 	}
-	if t.WSPath != "" || t.ConnectHost != "" || t.HostHeader != "" {
+	if t.WSPath != "" || t.ConnectHost != "" || t.HostHeader != "" || t.WSAdvertiseHTTP3 {
 		ws := map[string]interface{}{}
 		if t.WSPath != "" {
 			ws["path"] = t.WSPath
 		}
+		if t.ConnectHost != "" {
+			ws["connect_host"] = t.ConnectHost
+		}
 		if t.HostHeader != "" {
 			ws["host_header"] = t.HostHeader
+		}
+		if t.WSAdvertiseHTTP3 {
+			ws["advertise_http3"] = true
 		}
 		m["websocket"] = ws
 	}

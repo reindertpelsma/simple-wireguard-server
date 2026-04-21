@@ -16,6 +16,7 @@ const EMPTY_FORM = {
   ws_path: '',
   connect_host: '',
   host_header: '',
+  ws_advertise_http3: false,
   turn_server: '',
   turn_username: '',
   turn_password: '',
@@ -137,6 +138,7 @@ export default function TransportsTab() {
       ws_path: t.ws_path ?? '',
       connect_host: t.connect_host ?? '',
       host_header: t.host_header ?? '',
+      ws_advertise_http3: t.ws_advertise_http3 ?? false,
       turn_server: t.turn_server ?? '',
       turn_username: t.turn_username ?? '',
       turn_password: t.turn_password ?? '',
@@ -323,6 +325,10 @@ export default function TransportsTab() {
                 Host Header
                 <input className={INPUT} value={form.host_header} onChange={(e) => set('host_header', e.target.value)} placeholder="(inner HTTP host)" />
               </label>
+              <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 sm:col-span-3">
+                <input type="checkbox" checked={form.ws_advertise_http3} onChange={(e) => set('ws_advertise_http3', e.target.checked)} className="h-4 w-4" />
+                Advertise HTTP/3 on HTTPS responses with Alt-Svc
+              </label>
             </div>
           )}
 
@@ -442,6 +448,7 @@ export default function TransportsTab() {
                   {t.ws_path && <><dt className="text-gray-500 dark:text-gray-400">Path</dt><dd className="text-gray-800 dark:text-gray-200">{t.ws_path}</dd></>}
                   {t.connect_host && <><dt className="text-gray-500 dark:text-gray-400">Connect Host</dt><dd className="text-gray-800 dark:text-gray-200">{t.connect_host}</dd></>}
                   {t.host_header && <><dt className="text-gray-500 dark:text-gray-400">Host Header</dt><dd className="text-gray-800 dark:text-gray-200">{t.host_header}</dd></>}
+                  {t.ws_advertise_http3 && <><dt className="text-gray-500 dark:text-gray-400">HTTP/3</dt><dd className="text-gray-800 dark:text-gray-200">advertised via Alt-Svc</dd></>}
                   {t.turn_server && <><dt className="text-gray-500 dark:text-gray-400">TURN Server</dt><dd className="text-gray-800 dark:text-gray-200 col-span-2">{t.turn_server}</dd></>}
                   {t.turn_protocol && t.base === 'turn' && <><dt className="text-gray-500 dark:text-gray-400">TURN Protocol</dt><dd className="text-gray-800 dark:text-gray-200">{t.turn_protocol}</dd></>}
                   {t.turn_realm && <><dt className="text-gray-500 dark:text-gray-400">TURN Realm</dt><dd className="text-gray-800 dark:text-gray-200">{t.turn_realm}</dd></>}
