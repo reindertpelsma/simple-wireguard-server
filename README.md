@@ -1,105 +1,69 @@
 # Simple wireguard server
 
-A rootless WireGuard control plane built on [uwgsocks](https://github.com/reindertpelsma/userspace-wireguard-socks).
+A rootless WireGuard control plane built on top of
+[uwgsocks](https://github.com/reindertpelsma/userspace-wireguard-socks).
 
-Build a secure WireGuard server, relay hub, or small peer-synced mesh without Docker privileges, kernel modules, or system routing changes.
+It gives you a browser UI for running a WireGuard server, relay hub, or small
+peer-synced mesh without Docker privileges, kernel modules, or system routing
+changes.
 
-Supported and repeatedly tested on Linux, macOS, Windows, and FreeBSD.
-OpenBSD works for the backend and SQLite path, but should still be treated as
-experimental because the frontend bundle is currently reused from a prebuilt
-`dist/` rather than built natively there.
+## What it does
 
-## Quick Start (20 Seconds)
+- manages peers, ACLs, forwards, transports, and runtime updates from the browser
+- generates transport-aware client configs, including `#!` directives for `uwgsocks`
+- publishes protected internal services through login-gated subdomains
+- exposes `/proxy` and `/socket` frontend paths for clients and tooling
+- can host a managed TURN daemon with per-user TURN credentials
 
-1. **Build or download:**
-   Compile from source. Ensure you clone [https://github.com/reindertpelsma/userspace-wireguard-socks](https://github.com/reindertpelsma/userspace-wireguard-socks)
-   ```bash
-   ./compile.sh
-   ```
-   On OpenBSD, native Vite builds are not currently available. Reuse a prebuilt
-   `dist/` bundle and run `UWG_UI_SKIP_FRONTEND_BUILD=1 ./compile.sh`. OpenBSD
-   source builds use the cgo SQLite driver instead of the pure-Go SQLite stack.
+## Quick Start
 
-   Or see the release pages on both userspace-wireguard-socks and this repository, ensure you have at least uwgsocks and uwgsocks-ui binaries
-3. **Run (Default SQLite + Auto-discovery):**
-   ```bash
-   ./uwgsocks-ui -listen 0.0.0.0:8080
-   ```
-   On the very first startup, the server now prints a random admin password and generates a bootstrap WireGuard client config unless you disable it with `-generate-config=false`.
-4. **Docker**
-   No special capabilities required, this simple wireguard server works even in the most restrictive containers
+```bash
+./compile.sh
+./uwgsocks-ui -listen 0.0.0.0:8080
+```
 
-   ```bash
-   docker compose build
-   docker compose up -d
-   ```
-   Release tags also publish `ghcr.io/reindertpelsma/simple-wireguard-server:<tag>`.
-5. **Install script (Unix-like hosts):**
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/reindertpelsma/simple-wireguard-server/main/install.sh | sh
-   ```
-   This installs `uwgsocks-ui` and, if `uwgsocks` is not already present, also installs `uwgsocks` into `/usr/local/bin`.
-   On Windows:
-   ```powershell
-   curl.exe -fsSLo install.bat https://raw.githubusercontent.com/reindertpelsma/simple-wireguard-server/main/install.bat
-   curl.exe -fsSLo install.ps1 https://raw.githubusercontent.com/reindertpelsma/simple-wireguard-server/main/install.ps1
-   install.bat
-   ```
-6. **Login:** Open `http://localhost:8080` and sign in with `admin` plus the password printed in the terminal. 
+First startup prints a random admin password and, by default, a bootstrap
+WireGuard client config.
 
-## Why use it
+Unix-like install:
 
-- Run a WireGuard server stack under any Unix account
-- Manage peers, ACLs, forwards, transports, and runtime updates from the browser
-- Publish internal services through login-gated subdomains
-- Expose a single-domain `/proxy` and `/socket` frontend for clients and tooling
-- Generate transport-aware WireGuard configs, including `#!` directives understood by `uwgsocks`
-- Optionally enable peer syncing / P2P discovery for direct paths or multi-server client distribution
-- Optionally host a managed TURN relay daemon with per-user TURN credentials and listener management from the UI
+```bash
+curl -fsSL https://raw.githubusercontent.com/reindertpelsma/simple-wireguard-server/main/install.sh | sh
+```
 
-## Key Features
+Windows install:
 
-- **Admin Dashboard:** Real-time metrics, handshakes, short-term traffic graphs, and global setting management.
-- **Responsive UI:** Mobile-friendly layout with both dark and light themes.
-- **No system permissions or docker required** Setup a one-click wireguard server with a nice UI on any Linux machine under any account. Supports both Kernel wireguard and userspace implmentation.
-- **2FA and OIDC:** Local users can enable TOTP 2FA, and operators can enable OIDC login with CLI flags or environment variables.
-- **SD-WAN Ready:** Group peers by user, manage firewall ACLs, and handle multi-user environments.
-- **IPv6 support:** First class support for IPv6
-- **Runtime Traffic Shaping:** Admins can update per-peer upload/download/latency shapers while the daemon is running.
-- **Configuration Merging:** Support for merging UI settings with a custom baseline YAML config.
-- **Shareable Configs:** Create self-authenticated config links with optional expiry or one-time use; E2E links keep the decrypting nonce in the URL fragment.
-- **Zero-Trust Security:** Client private keys never touch the server (encrypted in-browser via AES-GCM).
-- **Transport-aware client configs:** Offer the right endpoint, `Transport = ...`, `#!URL=...`, `#!TURN=...`, or `#!Control=...` per client profile instead of one fixed bootstrap path.
-- **Peer syncing / P2P:** Optional tunnel-only control endpoint lets `uwgsocks` clients discover other peers, sync distributed clients between servers, and attempt direct UDP paths without introducing a separate control plane stack.
-- **NAT Traversal:** Built-in TURN server support for connectivity through strict firewalls/CGNAT, by hosting a small TURN server see the userspace wireguard socks project.
-- **Hosted TURN relay:** Enable a managed `turn` child process, publish TURN listeners, and let users mint their own TURN credentials from the dashboard.
-- **Secure by Default:** Argon2id hashing, encryption at rest for DB fields, and single-port HTTP/HTTPS multiplexing.
-- **Reverse Proxy Aware:** Trust configured proxy CIDRs for `X-Forwarded-For` / `X-Forwarded-Proto`, set an explicit canonical base URL, and expose optional browser access paths through `/proxy`, `/socket`, and protected service subdomains.
-- **Tag-based ACLs:** Assign policy tags to users and peers, attach extra CIDRs to tags, and write ACLs against users or tags while the daemon still receives concrete IP/CIDR rules.
+```powershell
+curl.exe -fsSLo install.bat https://raw.githubusercontent.com/reindertpelsma/simple-wireguard-server/main/install.bat
+install.bat
+```
 
-## Advanced Usage
+Release tags also publish:
+- `ghcr.io/reindertpelsma/simple-wireguard-server:<tag>`
 
-Detailed technical documentation and API schemas are available in the [docs/](./docs) folder.
+## Platform Status
 
-### CLI Flags
-- `-listen`: Port to host the UI and API (Supports HTTP/HTTPS multiplexing).
-- `-baseline-config`: Path to a baseline YAML to merge with UI settings.
-- `-turn-server`: Use a TURN relay for all WireGuard traffic.
-- `-db-type`: Supports `sqlite` (default), `mysql`, and `postgres`.
-- `-dsn`: Database connection string.
-- `-wg-url`: Connect to daemon via Unix socket (default) or HTTP.
-- `-generate-config`: Immediately mint and print a bootstrap WireGuard client config on startup. Defaults to enabled on the first boot.
-- `-frontend-dir`: Serve dashboard assets from a custom Vite `dist` directory instead of the embedded bundle.
-- `-extract-dist`: Extract the embedded dashboard bundle to a directory and exit.
-- `-oidc-issuer`, `-oidc-client-id`, `-oidc-client-secret`, `-oidc-redirect-url`: Enable OIDC sign-in. The same values can be supplied with `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and `OIDC_REDIRECT_URL`.
+- Supported and repeatedly tested:
+  - Linux, macOS, Windows, FreeBSD
+- Experimental:
+  - OpenBSD
+    - backend and SQLite path work
+    - source builds currently reuse a prebuilt `dist/` because Vite is not yet native there
+
+On OpenBSD, use:
+
+```bash
+UWG_UI_SKIP_FRONTEND_BUILD=1 ./compile.sh
+```
 
 ## Documentation
 
-- [Configuration reference](docs/configuration.md)
+- [Configuration guide](docs/configuration.md)
 - [Proxy and routing behavior](docs/proxy-routing.md)
-- [Raw socket and `/socket` protocol](docs/socket-protocol.md)
-- [Testing and integration coverage](docs/testing.md)
+- [Socket protocol](docs/socket-protocol.md)
+- [Testing](docs/testing.md)
 - [OpenAPI schema](docs/openapi.yaml)
 
 ## License
+
 ISC License. See [LICENSE](./LICENSE) for details.
