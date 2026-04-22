@@ -24,15 +24,16 @@ import (
 const serviceAuthPath = "/.well-known/_service_auth"
 
 type AccessProxyCredential struct {
-	ID           uint      `gorm:"primaryKey" json:"id"`
-	UserID       uint      `gorm:"not null" json:"user_id"`
-	User         User      `gorm:"foreignKey:UserID" json:"-"`
-	Username     string    `gorm:"uniqueIndex;not null" json:"username"`
-	PasswordHash string    `json:"-"`
-	Name         string    `json:"name"`
-	Enabled      bool      `gorm:"default:true" json:"enabled"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID            uint      `gorm:"primaryKey" json:"id"`
+	UserID        uint      `gorm:"not null" json:"user_id"`
+	User          User      `gorm:"foreignKey:UserID" json:"-"`
+	OwnerUsername string    `gorm:"-" json:"owner_username,omitempty"`
+	Username      string    `gorm:"uniqueIndex;not null" json:"username"`
+	PasswordHash  string    `json:"-"`
+	Name          string    `json:"name"`
+	Enabled       bool      `gorm:"default:true" json:"enabled"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type ExposedService struct {
@@ -112,7 +113,10 @@ type visibleExposedService struct {
 
 func handleListAccessProxyCredentials(w http.ResponseWriter, r *http.Request) {
 	var creds []AccessProxyCredential
-	gdb.Order("created_at desc").Find(&creds)
+	gdb.Preload("User").Order("created_at desc").Find(&creds)
+	for i := range creds {
+		creds[i].OwnerUsername = creds[i].User.Username
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(creds)
 }
@@ -566,8 +570,62 @@ func reverseProxyForService(svc ExposedService) *httputil.ReverseProxy {
 		stripCookie(req, serviceCookieName(svc))
 	}
 	proxy.Transport = serviceTransport(svc)
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		handleServiceBackendUnavailable(w, r, svc, err)
+	}
 	serviceProxyCache.Store(svc.ID, proxy)
 	return proxy
+}
+
+func handleServiceBackendUnavailable(w http.ResponseWriter, r *http.Request, svc ExposedService, err error) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusBadGateway)
+	fmt.Fprintf(w, `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Service unavailable</title>
+  <style>
+    :root { color-scheme: light dark; --bg:#0b1720; --panel:#12212d; --ink:#eef6f7; --muted:#a1b3bb; --accent:#5eead4; --line:rgba(255,255,255,.12); }
+    body { margin:0; min-height:100vh; display:grid; place-items:center; padding:24px; background:linear-gradient(180deg,#081118,var(--bg)); color:var(--ink); font-family:"Space Grotesk","Avenir Next","Segoe UI",sans-serif; }
+    main { width:min(100%%,760px); border:1px solid var(--line); border-radius:28px; padding:32px; background:rgba(18,33,45,.92); box-shadow:0 24px 64px rgba(0,0,0,.35); }
+    .eyebrow { display:inline-block; border-radius:999px; padding:8px 12px; background:rgba(94,234,212,.12); color:var(--accent); font-size:12px; font-weight:800; letter-spacing:.16em; text-transform:uppercase; }
+    h1 { margin:16px 0 10px; font-size:clamp(34px,7vw,58px); line-height:.95; letter-spacing:-.05em; }
+    p { margin:0 0 10px; color:var(--muted); line-height:1.6; }
+    code { color:var(--ink); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+    a { color:var(--accent); font-weight:700; }
+  </style>
+</head>
+<body>
+  <main>
+    <span class="eyebrow">Bad Gateway</span>
+    <h1>%s is unreachable</h1>
+    <p>The published service could not be reached through the local proxy path.</p>
+    <p><strong>Service:</strong> <code>%s</code></p>
+    <p><strong>Target:</strong> <code>%s</code></p>
+    <p><strong>Error:</strong> <code>%s</code></p>
+    <p><a href="%s">Try again</a></p>
+  </main>
+</body>
+</html>`,
+		svc.Name,
+		svc.Host,
+		svc.TargetURL,
+		htmlEscape(err.Error()),
+		r.URL.RequestURI(),
+	)
+}
+
+func htmlEscape(v string) string {
+	replacer := strings.NewReplacer(
+		"&", "&amp;",
+		"<", "&lt;",
+		">", "&gt;",
+		`"`, "&quot;",
+		"'", "&#39;",
+	)
+	return replacer.Replace(v)
 }
 
 func serviceTransport(svc ExposedService) http.RoundTripper {

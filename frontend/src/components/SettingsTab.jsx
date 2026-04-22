@@ -49,19 +49,6 @@ export default function SettingsTab({ sudoActive = false, onRequireSudo = () => 
   const [yamlInfo, setYamlInfo] = useState({ enabled: false, custom: '', effective: '', generated: '' });
   const [customYaml, setCustomYaml] = useState('');
   const [customEnabled, setCustomEnabled] = useState(false);
-  const [services, setServices] = useState([]);
-  const [serviceForm, setServiceForm] = useState({
-    name: '',
-    host: '',
-    target_url: '',
-    auth_mode: 'login',
-    bypass_cidrs: '',
-    cors_protection: true,
-    allowed_origins: '',
-    insecure_skip_verify: false,
-    ca_pem: '',
-    client_cert_pem: '',
-  });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
 
@@ -78,7 +65,6 @@ export default function SettingsTab({ sudoActive = false, onRequireSudo = () => 
       setYamlInfo(currentYaml);
       setCustomYaml(currentYaml.custom || currentYaml.effective || currentYaml.generated || '');
       setCustomEnabled(!!currentYaml.enabled);
-      setServices(await api.getExposedServices());
     } catch (err) {
       console.error(err);
     } finally {
@@ -126,40 +112,11 @@ export default function SettingsTab({ sudoActive = false, onRequireSudo = () => 
     }
   };
 
-  const handleCreateService = async (event) => {
-    event.preventDefault();
-    if (!sudoActive) return onRequireSudo();
-    setBusy('service');
-    try {
-      await api.createExposedService(serviceForm);
-      setServices(await api.getExposedServices());
-      setServiceForm({ ...serviceForm, name: '', host: '', target_url: '' });
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setBusy('');
-    }
-  };
-
-  const handleDeleteService = async (id) => {
-    if (!sudoActive) return onRequireSudo();
-    if (!confirm('Delete this exposed service?')) return;
-    setBusy('service');
-    try {
-      await api.deleteExposedService(id);
-      setServices(await api.getExposedServices());
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setBusy('');
-    }
-  };
-
   const directiveKeys = ['enable_client_ipv6', 'client_allowed_ips', 'client_config_tcp', 'client_config_turn_url', 'client_config_skipverifytls', 'client_config_url', 'peer_sync_mode', 'peer_sync_port'];
   const accessKeys = ['trusted_proxy_cidrs', 'web_base_url', 'http_proxy_access_enabled', 'socket_proxy_enabled', 'socket_proxy_http_port', 'exposed_services_enabled', 'service_auth_cookie_seconds'];
   const turnKeys = ['turn_hosting_enabled', 'turn_hosting_realm', 'turn_hosting_relay_ip', 'turn_allow_user_credentials', 'turn_max_user_credentials', 'turn_user_port_start', 'turn_user_port_end'];
   const explicitKeys = ['yaml_host_forward_redirect_ip'];
-  const editableConfigEntries = Object.entries(config).filter(([key]) => !['custom_yaml', 'custom_yaml_enabled', ...directiveKeys, ...accessKeys, ...turnKeys, ...explicitKeys].includes(key));
+  const editableConfigEntries = Object.entries(config).filter(([key]) => !['custom_yaml', 'custom_yaml_enabled', 'acl_inbound_default', 'acl_outbound_default', 'acl_relay_default', ...directiveKeys, ...accessKeys, ...turnKeys, ...explicitKeys].includes(key));
 
   if (loading) {
     return <div className="state-shell py-24 text-[var(--muted)]">Loading settings…</div>;
@@ -344,47 +301,6 @@ export default function SettingsTab({ sudoActive = false, onRequireSudo = () => 
             <Network size={18} />
           </div>
           <div>
-            <span className="eyebrow">Private Web Apps</span>
-            <h3 className="text-2xl font-black tracking-tight">Exposed services</h3>
-          </div>
-        </div>
-        <form onSubmit={handleCreateService} className="grid gap-4 md:grid-cols-2">
-          <input className="input-field" placeholder="service name" value={serviceForm.name} onChange={(event) => setServiceForm({ ...serviceForm, name: event.target.value })} />
-          <input className="input-field" placeholder="service.wireguard.example.com" value={serviceForm.host} onChange={(event) => setServiceForm({ ...serviceForm, host: event.target.value })} />
-          <input className="input-field md:col-span-2" placeholder="http://100.64.0.10:8080" value={serviceForm.target_url} onChange={(event) => setServiceForm({ ...serviceForm, target_url: event.target.value })} />
-          <select className="input-field" value={serviceForm.auth_mode} onChange={(event) => setServiceForm({ ...serviceForm, auth_mode: event.target.value })}>
-            <option value="login">Must be logged in</option>
-            <option value="open">Open to the internet</option>
-          </select>
-          <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={serviceForm.cors_protection} onChange={(event) => setServiceForm({ ...serviceForm, cors_protection: event.target.checked })} /> CORS protection</label>
-          <textarea className="input-field md:col-span-2" placeholder="Bypass CIDRs" value={serviceForm.bypass_cidrs} onChange={(event) => setServiceForm({ ...serviceForm, bypass_cidrs: event.target.value })} />
-          <input className="input-field md:col-span-2" placeholder="Allowed origins for CORS bypass" value={serviceForm.allowed_origins} onChange={(event) => setServiceForm({ ...serviceForm, allowed_origins: event.target.value })} />
-          <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={serviceForm.insecure_skip_verify} onChange={(event) => setServiceForm({ ...serviceForm, insecure_skip_verify: event.target.checked })} /> Skip backend TLS verification</label>
-          <textarea className="input-field md:col-span-2 font-mono text-sm" placeholder="Backend CA PEM" value={serviceForm.ca_pem} onChange={(event) => setServiceForm({ ...serviceForm, ca_pem: event.target.value })} />
-          <textarea className="input-field md:col-span-2 font-mono text-sm" placeholder="Client certificate and key PEM" value={serviceForm.client_cert_pem} onChange={(event) => setServiceForm({ ...serviceForm, client_cert_pem: event.target.value })} />
-          <button type="submit" disabled={busy === 'service'} className="primary-button md:col-span-2"><span>Add service</span></button>
-        </form>
-        <div className="mt-5 grid gap-2">
-          {services.map((service) => (
-            <div key={service.id} className="rounded-lg border border-[var(--border)] p-3 text-sm">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="font-bold">{service.host}</p>
-                  <p className="text-[var(--muted)]">{service.target_url} · {service.auth_mode}</p>
-                </div>
-                <button type="button" onClick={() => handleDeleteService(service.id)} className="ghost-button ghost-button-danger">Delete</button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="panel p-6">
-        <div className="mb-6 flex items-center gap-3">
-          <div className="brand-badge">
-            <Network size={18} />
-          </div>
-          <div>
             <span className="eyebrow">Client Config Directives</span>
             <h3 className="text-2xl font-black tracking-tight">Downloaded config options</h3>
           </div>
@@ -436,7 +352,7 @@ export default function SettingsTab({ sudoActive = false, onRequireSudo = () => 
               onChange={(e) => setConfig({ ...config, client_config_tcp: e.target.value })}
             >
               <option value="">Not set (use UDP / server default)</option>
-              <option value="supported">supported — prefer TCP, fall back to UDP</option>
+              <option value="supported">supported — prefer UDP, try TCP if needed</option>
               <option value="required">required — TCP only</option>
             </select>
           </div>

@@ -243,6 +243,18 @@ code, pre {
   box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.14);
 }
 
+.input-field:disabled,
+.select-field:disabled,
+.input-field[readonly],
+.select-field[readonly],
+textarea:disabled,
+textarea[readonly] {
+  cursor: not-allowed;
+  background: color-mix(in srgb, var(--surface-soft) 70%, var(--panel-strong));
+  color: var(--muted);
+  opacity: 0.8;
+}
+
 :root[data-theme='dark'] .input-field:focus,
 :root[data-theme='dark'] .select-field:focus {
   box-shadow: 0 0 0 4px rgba(94, 234, 212, 0.12);
@@ -266,6 +278,17 @@ code, pre {
 .ghost-button:hover,
 .theme-toggle:hover {
   transform: translateY(-1px);
+}
+
+.primary-button:disabled,
+.secondary-button:disabled,
+.ghost-button:disabled,
+.theme-toggle:disabled,
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+  box-shadow: none;
 }
 
 .primary-button {

@@ -178,15 +178,17 @@ const loginPageHTML = `<!doctype html>
     p { color:var(--muted); line-height:1.65; }
     form { display:grid; gap:16px; margin-top:24px; }
     label { display:grid; gap:8px; color:var(--muted); font-size:12px; font-weight:800; letter-spacing:.14em; text-transform:uppercase; }
-    input { width:100%; border:1px solid var(--line); border-radius:16px; padding:14px 15px; background:var(--input); color:var(--ink); font:inherit; outline:none; }
+    input { width:100%; border:1px solid var(--line); border-radius:16px; padding:14px 15px; background:var(--input); color:var(--ink); color-scheme:inherit; -webkit-text-fill-color:var(--ink); font:inherit; outline:none; }
     input:focus { border-color:var(--accent); box-shadow:0 0 0 4px rgba(15,118,110,.13); }
+    input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:focus { -webkit-text-fill-color:var(--ink); box-shadow:0 0 0 1000px var(--input) inset; transition:background-color 9999s ease-out 0s; }
     button,a.button { display:inline-flex; justify-content:center; align-items:center; gap:8px; border-radius:999px; border:0; padding:14px 18px; color:#effcf9; background:linear-gradient(135deg,#115e59,#0f766e); font-weight:850; text-decoration:none; cursor:pointer; }
     button.secondary,a.secondary { border:1px solid var(--line); background:rgba(15,118,110,.1); color:var(--accent); }
     button:disabled { opacity:.6; cursor:wait; }
     .error { display:none; border:1px solid rgba(194,65,12,.28); background:rgba(194,65,12,.1); color:var(--danger); border-radius:18px; padding:12px 14px; }
     .error.show { display:block; }
     .topbar { position:fixed; top:20px; right:20px; display:flex; gap:12px; align-items:center; }
-    .theme { border:1px solid var(--line); border-radius:999px; background:transparent; color:var(--ink); }
+    .theme { display:inline-flex; align-items:center; gap:8px; border:1px solid var(--line); border-radius:999px; background:transparent; color:var(--ink); }
+    .theme-icon { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; }
     .powered { display:inline-flex; margin-top:18px; color:var(--accent); font-weight:700; text-decoration:none; }
     .tiles { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
     .tile { border:1px solid var(--line); border-radius:20px; padding:14px; background:rgba(255,255,255,.62); font-weight:800; }
@@ -197,7 +199,7 @@ const loginPageHTML = `<!doctype html>
 </head>
 <body>
   <div class="topbar">
-    <button id="theme-toggle" type="button" class="theme">Toggle theme</button>
+    <button id="theme-toggle" type="button" class="theme"><span id="theme-icon" class="theme-icon">☾</span><span id="theme-label">Dark</span></button>
   </div>
   <main>
     <section class="card">
@@ -247,6 +249,11 @@ const loginPageHTML = `<!doctype html>
       cookieSet(THEME_KEY, theme);
       cookieSet(OS_THEME_KEY, osTheme);
     }
+    function syncThemeButton() {
+      const dark = root.dataset.theme === 'dark';
+      document.getElementById('theme-icon').textContent = dark ? '☀' : '☾';
+      document.getElementById('theme-label').textContent = dark ? 'Light' : 'Dark';
+    }
     function resolveTheme() {
       const osTheme = detectOSTheme();
       let savedTheme = '';
@@ -269,10 +276,12 @@ const loginPageHTML = `<!doctype html>
       return osTheme;
     }
     root.dataset.theme = resolveTheme();
+    syncThemeButton();
     document.getElementById('theme-toggle').addEventListener('click', () => {
       const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
       root.dataset.theme = next;
       persistTheme(next, detectOSTheme());
+      syncThemeButton();
     });
     try {
       if (window.matchMedia) {
@@ -281,6 +290,7 @@ const loginPageHTML = `<!doctype html>
           const next = detectOSTheme();
           root.dataset.theme = next;
           persistTheme(next, next);
+          syncThemeButton();
         };
         if (query.addEventListener) query.addEventListener('change', onChange);
         else if (query.addListener) query.addListener(onChange);

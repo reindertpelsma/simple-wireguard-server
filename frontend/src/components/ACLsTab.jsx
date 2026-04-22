@@ -58,7 +58,7 @@ function tokensToFields(tokens, side) {
 }
 
 // Token input component (Gmail-style chips)
-function TokenInput({ tokens, onChange, placeholder }) {
+function TokenInput({ tokens, onChange, placeholder, onDraftChange = () => {} }) {
   const [input, setInput] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [sugIdx, setSugIdx] = useState(-1);
@@ -81,6 +81,7 @@ function TokenInput({ tokens, onChange, placeholder }) {
     if (tokens.some(t => t.type === type && t.value === value)) return;
     onChange([...tokens, { type, value }]);
     setInput('');
+    onDraftChange('');
     setSuggestions([]);
     setSugIdx(-1);
   };
@@ -120,6 +121,7 @@ function TokenInput({ tokens, onChange, placeholder }) {
   const handleChange = (e) => {
     const v = e.target.value;
     setInput(v);
+    onDraftChange(v);
     setSugIdx(-1);
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => fetchSuggestions(v), 150);
@@ -153,7 +155,7 @@ function TokenInput({ tokens, onChange, placeholder }) {
           value={input}
           onChange={handleChange}
           onKeyDown={handleKey}
-          onBlur={() => setTimeout(() => { setSuggestions([]); setSugIdx(-1); }, 150)}
+          onBlur={() => setTimeout(() => { setSuggestions([]); setSugIdx(-1); onDraftChange(input); }, 150)}
           placeholder={tokens.length === 0 ? placeholder : ''}
         />
       </div>
@@ -246,9 +248,17 @@ function RuleForm({ initial, onSave, onCancel, listName }) {
   const [srcTokens, setSrcTokens] = useState(() => initial ? ruleToTokens(initial, 'src') : []);
   const [dstTokens, setDstTokens] = useState(() => initial ? ruleToTokens(initial, 'dst') : []);
   const [form, setForm] = useState(() => initial ? { ...initial } : { ...EMPTY_RULE });
+  const [srcDraft, setSrcDraft] = useState('');
+  const [dstDraft, setDstDraft] = useState('');
+  const [error, setError] = useState('');
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    if (srcDraft.trim() || dstDraft.trim()) {
+      setError('Source and destination fields must use selected tokens only. Confirm or clear any leftover text first.');
+      return;
+    }
+    setError('');
     const srcFields = tokensToFields(srcTokens, 'src');
     const dstFields = tokensToFields(dstTokens, 'dst');
     onSave({ ...form, list_name: listName, ...srcFields, ...dstFields, proto: form.proto === 'any' ? '' : form.proto });
@@ -282,13 +292,15 @@ function RuleForm({ initial, onSave, onCancel, listName }) {
 
       <div className="space-y-1.5">
         <label className="field-label">Source <span className="font-normal text-[var(--muted)] normal-case">— users, groups, peers, IPs/CIDRs</span></label>
-        <TokenInput tokens={srcTokens} onChange={setSrcTokens} placeholder="any source — type to search or enter an IP/CIDR" />
+        <TokenInput tokens={srcTokens} onChange={setSrcTokens} onDraftChange={setSrcDraft} placeholder="any source — type to search or enter an IP/CIDR" />
       </div>
 
       <div className="space-y-1.5">
         <label className="field-label">Destination <span className="font-normal text-[var(--muted)] normal-case">— users, groups, peers, IPs/CIDRs</span></label>
-        <TokenInput tokens={dstTokens} onChange={setDstTokens} placeholder="any destination — type to search or enter an IP/CIDR" />
+        <TokenInput tokens={dstTokens} onChange={setDstTokens} onDraftChange={setDstDraft} placeholder="any destination — type to search or enter an IP/CIDR" />
       </div>
+
+      {error ? <div className="error-banner">{error}</div> : null}
 
       <div className="flex justify-end gap-2">
         {onCancel && <button type="button" onClick={onCancel} className="ghost-button">Cancel</button>}

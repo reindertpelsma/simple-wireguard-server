@@ -92,7 +92,9 @@ func normalizeManagedTURNAPIURL() {
 }
 
 func buildTurnDaemonCommand() *exec.Cmd {
-	return exec.Command(*turnDaemonPath, "--config", resolvePath("turn_canonical.yaml"))
+	cmd := exec.Command(*turnDaemonPath, "--config", resolvePath("turn_canonical.yaml"))
+	configureManagedChild(cmd)
+	return cmd
 }
 
 func turnHostingEnabled() bool {

@@ -56,13 +56,22 @@ export const api = {
   login: (username, password, totpCode = '') =>
     request('/api/login', {
       method: 'POST',
+      auth: false,
+      redirectOnAuth: false,
       body: JSON.stringify({ username, password, totp_code: totpCode }),
     }),
 
   reauth: (password, totpCode = '') =>
     request('/api/auth/reauth', {
       method: 'POST',
+      redirectOnAuth: false,
       body: JSON.stringify({ password, totp_code: totpCode }),
+    }),
+
+  lockSudo: () =>
+    request('/api/auth/lock', {
+      method: 'POST',
+      redirectOnAuth: false,
     }),
 
   logout: () =>
@@ -234,6 +243,11 @@ export const api = {
 
   getExposedServices: () => request('/api/admin/exposed-services'),
   getVisibleServices: () => request('/api/services'),
+  getAdminProxyCredentials: () => request('/api/admin/proxy-credentials'),
+  deleteAccessProxyCredential: (id) =>
+    request(`/api/admin/proxy-credentials/${id}`, {
+      method: 'DELETE',
+    }),
   createExposedService: (data) =>
     request('/api/admin/exposed-services', {
       method: 'POST',

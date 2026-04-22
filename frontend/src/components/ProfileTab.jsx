@@ -14,6 +14,7 @@ export default function ProfileTab({ me: meProp, sudoActive = false, onRequireSu
   const [showQR, setShowQR] = useState(false);
   const [busy, setBusy] = useState('');
   const [turnForm, setTurnForm] = useState({ name: 'TURN relay', wireguard_public_key: '' });
+  const [proxyCredName, setProxyCredName] = useState('Proxy access');
 
   const [pwForm, setPwForm] = useState({ old_password: '', password: '', confirm: '' });
   const [pwError, setPwError] = useState('');
@@ -21,7 +22,8 @@ export default function ProfileTab({ me: meProp, sudoActive = false, onRequireSu
 
   const fetchData = useCallback(async () => {
     try {
-      const [meData, credData, cfg] = await Promise.all([api.getMe(), api.getMyProxyCredentials(), api.getPublicConfig()]);
+      const [meData, cfg] = await Promise.all([api.getMe(), api.getPublicConfig()]);
+      const credData = meData?.can_manage_settings ? await api.getAdminProxyCredentials() : await api.getMyProxyCredentials();
       setMe(meData);
       onRefreshMe();
       setCreds(credData);
@@ -118,9 +120,11 @@ export default function ProfileTab({ me: meProp, sudoActive = false, onRequireSu
     if (!sudoActive) return onRequireSudo();
     setBusy('cred');
     try {
-      const res = await api.createMyProxyCredential({ name: 'Proxy access' });
+      const res = await api.createMyProxyCredential({ name: proxyCredName || 'Proxy access' });
       setCreatedCred(res);
-      setCreds(await api.getMyProxyCredentials());
+      setProxyCredName('Proxy access');
+      const nextCreds = me?.can_manage_settings ? await api.getAdminProxyCredentials() : await api.getMyProxyCredentials();
+      setCreds(nextCreds);
     } catch (err) {
       alert(err.message);
     } finally {
@@ -132,8 +136,13 @@ export default function ProfileTab({ me: meProp, sudoActive = false, onRequireSu
     if (!sudoActive) return onRequireSudo();
     if (!confirm('Delete this proxy credential?')) return;
     try {
-      await api.deleteMyProxyCredential(id);
-      setCreds(await api.getMyProxyCredentials());
+      if (me?.can_manage_settings) {
+        await api.deleteAccessProxyCredential(id);
+        setCreds(await api.getAdminProxyCredentials());
+      } else {
+        await api.deleteMyProxyCredential(id);
+        setCreds(await api.getMyProxyCredentials());
+      }
     } catch (err) {
       alert(err.message);
     }
@@ -167,6 +176,8 @@ export default function ProfileTab({ me: meProp, sudoActive = false, onRequireSu
   const isOIDC = me?.oidc_login;
   const turnEnabled = publicConfig.turn_hosting_enabled === 'true';
   const turnSelfService = publicConfig.turn_allow_user_credentials === 'true';
+  const proxyBaseURL = String(publicConfig.web_base_url || window.location.origin || '').replace(/\/+$/, '');
+  const proxyEndpoint = `${proxyBaseURL || window.location.origin}/proxy`;
 
   if (!me) return <div className="state-shell py-24 text-[var(--muted)]">Loading…</div>;
 
@@ -333,14 +344,21 @@ export default function ProfileTab({ me: meProp, sudoActive = false, onRequireSu
             <p className="mb-2 text-sm font-semibold">Credential created — save the password now, it won't be shown again.</p>
             <p className="font-mono text-sm"><span className="text-[var(--muted)]">Username:</span> {createdCred.username}</p>
             <p className="font-mono text-sm"><span className="text-[var(--muted)]">Password:</span> {createdCred.password}</p>
+            <p className="font-mono text-xs"><span className="text-[var(--muted)]">HTTPS proxy URL:</span> {proxyEndpoint}</p>
           </div>
         )}
+
+        <div className="mb-4 rounded-2xl border border-[var(--border)] bg-[var(--surface-soft)] p-4">
+          <p className="text-sm text-[var(--muted)]">Use this endpoint in HTTPS proxy clients and authenticate with one of the credentials below.</p>
+          <p className="mt-2 break-all font-mono text-sm text-[var(--text)]">{proxyEndpoint}</p>
+        </div>
 
         <div className="mb-4 space-y-2">
           {creds.map(c => (
             <div key={c.id} className="flex items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] p-3">
               <div className="flex-1">
                 <p className="font-mono text-sm font-semibold">{c.username}</p>
+                {me?.can_manage_settings && c.owner_username ? <p className="text-xs text-[var(--muted)]">Owner: {c.owner_username}</p> : null}
                 <p className="text-xs text-[var(--muted)]">{c.name} · created {new Date(c.created_at).toLocaleDateString()}</p>
               </div>
               <button type="button" onClick={() => handleDeleteCred(c.id)} className="ghost-button ghost-button-danger text-xs">Delete</button>
@@ -348,10 +366,16 @@ export default function ProfileTab({ me: meProp, sudoActive = false, onRequireSu
           ))}
         </div>
 
-        <button type="button" onClick={handleCreateCred} disabled={busy === 'cred'} className="primary-button">
-          <KeyRound size={15} />
-          <span>{busy === 'cred' ? 'Creating…' : 'Create credential'}</span>
-        </button>
+        <div className="space-y-3 rounded-2xl border border-[var(--border)] bg-[var(--surface-soft)] p-4">
+          <div className="space-y-1.5">
+            <label className="field-label">Credential name</label>
+            <input className="input-field" value={proxyCredName} onChange={(event) => setProxyCredName(event.target.value)} />
+          </div>
+          <button type="button" onClick={handleCreateCred} disabled={busy === 'cred'} className="primary-button">
+            <KeyRound size={15} />
+            <span>{busy === 'cred' ? 'Creating…' : 'Create credential'}</span>
+          </button>
+        </div>
       </section>
 
       {turnEnabled && (

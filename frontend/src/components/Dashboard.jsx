@@ -112,7 +112,17 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
               <ThemeToggle theme={theme} onToggle={onToggleTheme} />
               <button
                 type="button"
-                onClick={() => setSudoModalOpen(true)}
+                onClick={async () => {
+                  if (sudoActive) {
+                    try {
+                      await api.lockSudo();
+                    } finally {
+                      refreshContext();
+                    }
+                    return;
+                  }
+                  setSudoModalOpen(true);
+                }}
                 className={`ghost-button ${sudoActive ? '' : 'ghost-button-danger'}`}
               >
                 <Lock size={16} />
@@ -197,7 +207,7 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
 
       <main className="mx-auto w-full max-w-7xl px-4 py-6 pb-24 sm:px-6 lg:px-8">
         {activeTab === 'peers'      && <PeersTab isAdmin={isAdmin} currentUsername={currentUsername} sudoActive={sudoActive} onRequireSudo={() => setSudoModalOpen(true)} onSelectPeer={(peer) => sudoActive ? setSelectedPeer(peer) : setSudoModalOpen(true)} />}
-        {activeTab === 'services'   && <ServicesTab isAdmin={isAdmin} />}
+        {activeTab === 'services'   && <ServicesTab isAdmin={isAdmin} sudoActive={sudoActive} onRequireSudo={() => setSudoModalOpen(true)} />}
         {activeTab === 'profile'    && <ProfileTab me={me} sudoActive={sudoActive} onRequireSudo={() => setSudoModalOpen(true)} onRefreshMe={refreshContext} />}
         {activeTab === 'acls'       && <ACLsTab />}
         {activeTab === 'turn'       && <TurnTab isAdmin={isAdmin} sudoActive={sudoActive} onRequireSudo={() => setSudoModalOpen(true)} />}
@@ -209,14 +219,16 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
         Powered by <a className="font-semibold text-[var(--accent)] underline-offset-4 hover:underline" href="https://github.com/reindertpelsma/simple-wireguard-server" target="_blank" rel="noreferrer">simple-wireguard-server</a>
       </footer>
 
-      <button
-        type="button"
-        onClick={() => sudoActive ? setIsAddModalOpen(true) : setSudoModalOpen(true)}
-        className="floating-action lg:hidden"
-        aria-label="Create device"
-      >
-        <Plus size={22} />
-      </button>
+      {activeTab === 'peers' && (
+        <button
+          type="button"
+          onClick={() => sudoActive ? setIsAddModalOpen(true) : setSudoModalOpen(true)}
+          className="floating-action lg:hidden"
+          aria-label="Create device"
+        >
+          <Plus size={22} />
+        </button>
+      )}
 
       {isAddModalOpen && (
         <AddPeerModal

@@ -332,28 +332,32 @@ export default function TurnTab({ isAdmin = false, sudoActive = false, onRequire
             </div>
           ))}
         </div>
-        {!isAdmin && (
+        {turnSelfService ? (
           <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--surface-soft)] p-4">
-            {turnSelfService ? (
-              <div className="space-y-3">
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <label className="field-label">Credential name</label>
-                    <input className="input-field" value={turnForm.name} onChange={(event) => setTurnForm({ ...turnForm, name: event.target.value })} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="field-label">Optional WireGuard public key</label>
-                    <input className="input-field font-mono text-sm" value={turnForm.wireguard_public_key} onChange={(event) => setTurnForm({ ...turnForm, wireguard_public_key: event.target.value })} />
-                  </div>
-                </div>
-                <button type="button" onClick={handleCreateCredential} className="primary-button">
-                  <Plus size={16} />
-                  <span>Create TURN credential</span>
-                </button>
+            <div className="space-y-3">
+              <div>
+                <h4 className="text-base font-semibold text-[var(--text)]">Create your TURN credential</h4>
+                <p className="text-sm text-[var(--muted)]">This creates a credential for the currently signed-in account.</p>
               </div>
-            ) : (
-              <p className="text-sm text-[var(--muted)]">TURN self-service is disabled by the administrator.</p>
-            )}
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-1.5">
+                  <label className="field-label">Credential name</label>
+                  <input className="input-field" value={turnForm.name} onChange={(event) => setTurnForm({ ...turnForm, name: event.target.value })} />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="field-label">Optional WireGuard public key</label>
+                  <input className="input-field font-mono text-sm" value={turnForm.wireguard_public_key} onChange={(event) => setTurnForm({ ...turnForm, wireguard_public_key: event.target.value })} />
+                </div>
+              </div>
+              <button type="button" onClick={handleCreateCredential} className="primary-button">
+                <Plus size={16} />
+                <span>Create TURN credential</span>
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--surface-soft)] p-4">
+            <p className="text-sm text-[var(--muted)]">TURN self-service is disabled by the administrator.</p>
           </div>
         )}
       </section>

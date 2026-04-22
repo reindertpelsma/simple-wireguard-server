@@ -96,21 +96,21 @@ func handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":                   user.ID,
-		"username":             user.Username,
-		"is_admin":             userIsAdmin(user),
-		"is_moderator":         userIsModeratorOnly(user),
-		"role":                 userRole(user),
-		"totp_enabled":         user.TOTPEnabled,
-		"oidc_login":           user.OIDCSubject != nil,
-		"sudo_active":          userHasActiveSudo(user, time.Now()),
-		"sudo_expires_at":      userSudoExpiry(user),
-		"can_manage_users":     userCanManageUsers(user),
-		"can_manage_settings":  userIsAdmin(user),
-		"can_manage_acls":      userIsAdmin(user),
+		"id":                    user.ID,
+		"username":              user.Username,
+		"is_admin":              userIsAdmin(user),
+		"is_moderator":          userIsModeratorOnly(user),
+		"role":                  userRole(user),
+		"totp_enabled":          user.TOTPEnabled,
+		"oidc_login":            user.OIDCSubject != nil,
+		"sudo_active":           userHasActiveSudo(user, time.Now()),
+		"sudo_expires_at":       userSudoExpiry(user),
+		"can_manage_users":      userCanManageUsers(user),
+		"can_manage_settings":   userIsAdmin(user),
+		"can_manage_acls":       userIsAdmin(user),
 		"can_manage_transports": userIsAdmin(user),
-		"can_manage_forwards":  userIsAdmin(user),
-		"can_manage_turn":      userIsAdmin(user),
+		"can_manage_forwards":   userIsAdmin(user),
+		"can_manage_turn":       userIsAdmin(user),
 	})
 }
 
@@ -249,6 +249,18 @@ func handleReauth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	refreshUserSudo(&user)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func handleLockSudo(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUserFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if err := gdb.Model(&user).Update("sudo_auth_at", time.Time{}).Error; err != nil {
+		http.Error(w, "Failed to lock session", http.StatusInternalServerError)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

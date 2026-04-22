@@ -516,6 +516,42 @@ func TestACLManagement(t *testing.T) {
 	}
 }
 
+func TestACLManagementRejectsInvalidSelectors(t *testing.T) {
+	setupTestDB(t)
+	createTestUser(t, "admin", true)
+
+	t.Run("invalid source CIDR", func(t *testing.T) {
+		rule := ACLRule{
+			ListName: "inbound",
+			Action:   "allow",
+			Src:      "not-a-cidr",
+		}
+		b, _ := json.Marshal(rule)
+		req := httptest.NewRequest("POST", "/api/admin/acls", bytes.NewBuffer(b))
+		w := httptest.NewRecorder()
+		handleCreateACL(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for invalid source selector, got %d", w.Code)
+		}
+	})
+
+	t.Run("unknown user reference", func(t *testing.T) {
+		rule := ACLRule{
+			ListName: "outbound",
+			Action:   "allow",
+			Dst:      "example.com",
+			SrcUsers: "missing-user",
+		}
+		b, _ := json.Marshal(rule)
+		req := httptest.NewRequest("POST", "/api/admin/acls", bytes.NewBuffer(b))
+		w := httptest.NewRecorder()
+		handleCreateACL(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for unknown ACL user selector, got %d", w.Code)
+		}
+	})
+}
+
 func TestHandleGetPeersIncludesTransportStatus(t *testing.T) {
 	setupTestDB(t)
 	user, token := createTestUser(t, "user1", false)

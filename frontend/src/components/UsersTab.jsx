@@ -67,6 +67,15 @@ function groupsWithRole(groupsValue, role) {
   return filtered.join(', ');
 }
 
+function canManageTargetUser(actor, target) {
+  if (!actor || !target || actor.id === target.id) return false;
+  const actorRole = userRoleValue(actor);
+  const targetRole = userRoleValue(target);
+  if (actorRole === 'admin') return true;
+  if (actorRole !== 'moderator') return false;
+  return targetRole === 'user';
+}
+
 export default function UsersTab({ me = null }) {
   const [users, setUsers] = useState([]);
   const [groups, setGroups] = useState([]);
@@ -369,7 +378,7 @@ export default function UsersTab({ me = null }) {
                   <select
                     className="input-field text-sm py-1 h-8"
                     value={user.primary_group || 'default'}
-                    disabled={me?.id === user.id}
+                    disabled={!canManageTargetUser(me, user)}
                     onChange={(e) => {
                       setUsers(cur => cur.map(u => u.id === user.id ? { ...u, primary_group: e.target.value } : u));
                       handleUpdateUserPrimaryGroup(user, e.target.value);
@@ -386,7 +395,7 @@ export default function UsersTab({ me = null }) {
                     <select
                       className="input-field h-8 py-1 text-sm"
                       value={userRoleValue(user)}
-                      disabled={me?.id === user.id || user.id === 1}
+                      disabled={!canManageTargetUser(me, user) || user.id === 1}
                       onChange={(e) => {
                         const nextRole = e.target.value;
                         setUsers((current) => current.map((entry) => entry.id === user.id ? { ...entry, is_admin: nextRole === 'admin', groups: groupsWithRole(entry.groups || '', nextRole) } : entry));
@@ -419,7 +428,7 @@ export default function UsersTab({ me = null }) {
                   <input
                     className="input-field min-w-48"
                     value={user.groups || ''}
-                    disabled={me?.id === user.id}
+                    disabled={!canManageTargetUser(me, user)}
                     onChange={(e) => setUsers((cur) => cur.map((u) => u.id === user.id ? { ...u, groups: e.target.value } : u))}
                     onBlur={(e) => handleUpdateUserGroups(user, e.target.value)}
                   />
@@ -428,37 +437,36 @@ export default function UsersTab({ me = null }) {
                 <td className="text-right">
                   <div className="flex flex-col items-end gap-1">
                     <div className="flex gap-1">
-                      {!user.oidc_login && (
+                      {!user.oidc_login && canManageTargetUser(me, user) ? (
                         <button
                           type="button"
                           onClick={() => setPasswordEditId(passwordEditId === user.id ? null : user.id)}
                           className="ghost-button text-xs"
                           title="Change password"
-                          disabled={me?.id === user.id}
                         >
                           <KeyRound size={14} />
                         </button>
-                      )}
-                      {!user.oidc_login && user.totp_enabled && (
+                      ) : null}
+                      {!user.oidc_login && user.totp_enabled && canManageTargetUser(me, user) ? (
                         <button
                           type="button"
                           onClick={() => handleAdminResetTOTP(user)}
                           className="ghost-button text-xs"
                           title="Remove 2FA"
-                          disabled={me?.id === user.id}
                         >
                           <ShieldOff size={14} />
                         </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(user.id)}
-                        className="ghost-button ghost-button-danger"
-                        hidden={me?.id === user.id || user.id === 1 || userRole(user) === 'Administrator'}
-                      >
-                        <Trash2 size={16} />
-                        <span>Delete</span>
-                      </button>
+                      ) : null}
+                      {canManageTargetUser(me, user) && user.id !== 1 ? (
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(user.id)}
+                          className="ghost-button ghost-button-danger"
+                        >
+                          <Trash2 size={16} />
+                          <span>Delete</span>
+                        </button>
+                      ) : null}
                     </div>
                     {passwordEditId === user.id && (
                       <UserPasswordForm user={user} onDone={() => setPasswordEditId(null)} />

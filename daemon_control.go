@@ -62,10 +62,14 @@ func buildDaemonCommand() *exec.Cmd {
 			apiListen = "unix://" + resolvePath(socketPath)
 		}
 	}
+	var cmd *exec.Cmd
 	if *systemMode {
-		return exec.Command(*daemonPath, "-config", resolvePath("uwg_canonical.yaml"), "-api-listen", apiListen)
+		cmd = exec.Command(*daemonPath, "-config", resolvePath("uwg_canonical.yaml"), "-api-listen", apiListen)
+	} else {
+		cmd = exec.Command(*daemonPath, "--config", resolvePath("uwg_canonical.yaml"))
 	}
-	return exec.Command(*daemonPath, "--config", resolvePath("uwg_canonical.yaml"))
+	configureManagedChild(cmd)
+	return cmd
 }
 
 func stopManagedDaemon(timeout time.Duration) error {

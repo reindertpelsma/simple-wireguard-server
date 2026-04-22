@@ -39,7 +39,7 @@ const EMPTY_FORM = {
 const INPUT =
   'w-full rounded border border-[var(--border)] bg-[var(--input)] px-2 py-1 text-[var(--text)] placeholder:text-[var(--muted)]';
 const SELECT = INPUT;
-const LABEL = 'flex flex-col gap-1 text-sm text-gray-700 dark:text-gray-300';
+const LABEL = 'flex flex-col gap-1 text-sm text-[var(--text)]';
 
 function needsTLS(base) {
   return ['tls', 'dtls', 'https', 'quic', 'quic-ws', 'url'].includes(base);
@@ -63,9 +63,9 @@ function needsWebSocket(base) {
 
 function connectionBadge(transport) {
   if (transport.connected) {
-    return { label: 'connected', className: 'rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900 dark:text-green-300' };
+    return { label: 'connected', className: 'status-chip' };
   }
-  return { label: 'idle', className: 'rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700 dark:bg-gray-700 dark:text-gray-300' };
+  return { label: 'idle', className: 'status-chip status-chip-muted' };
 }
 
 export default function TransportsTab() {
@@ -186,7 +186,7 @@ export default function TransportsTab() {
         </div>
         <button
           onClick={() => { setForm(EMPTY_FORM); setEditId(null); setShowForm((s) => !s); setError(''); }}
-          className="flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700"
+          className="primary-button"
         >
           <Plus className="h-4 w-4" />
           Add Transport
@@ -215,7 +215,7 @@ export default function TransportsTab() {
                 {BASE_OPTIONS.map((b) => <option key={b} value={b}>{b}</option>)}
               </select>
             </label>
-            <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 pt-5">
+            <label className="flex items-center gap-2 pt-5 text-sm text-[var(--text)]">
               <input type="checkbox" checked={form.listen} onChange={(e) => set('listen', e.target.checked)} className="h-4 w-4" />
               Enable Listener
             </label>
@@ -373,16 +373,16 @@ export default function TransportsTab() {
             </div>
           </details>
 
-          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+          {error && <p className="text-sm text-[var(--danger)]">{error}</p>}
 
           <div className="flex gap-2">
-            <button type="submit" className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700">
+            <button type="submit" className="primary-button">
               {editId != null ? 'Save Changes' : 'Create Transport'}
             </button>
             <button
               type="button"
               onClick={() => { setShowForm(false); setEditId(null); setError(''); }}
-              className="rounded-md border border-gray-300 bg-white px-4 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+              className="ghost-button"
             >
               Cancel
             </button>
@@ -392,25 +392,25 @@ export default function TransportsTab() {
 
       {/* Transport list */}
       {transports.length === 0 ? (
-        <p className="text-sm text-gray-500 dark:text-gray-400">No transports configured. Add one above.</p>
+        <p className="text-sm text-[var(--muted)]">No transports configured. Add one above.</p>
       ) : (
         <div className="space-y-2">
           {transports.map((t) => (
-            <div key={t.id} className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
+            <div key={t.id} className="rounded-3xl border border-[var(--border)] bg-[var(--panel-strong)]">
               <div className="flex items-center justify-between px-4 py-3">
                 <div className="flex flex-wrap items-center gap-2">
-                  <button onClick={() => toggleExpand(t.id)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                  <button onClick={() => toggleExpand(t.id)} className="ghost-button">
                     {expanded[t.id] ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                   </button>
-                  <span className="font-mono text-sm font-medium text-gray-900 dark:text-gray-100">{t.name}</span>
-                  <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900 dark:text-blue-300">{t.base}</span>
+                  <span className="font-mono text-sm font-medium text-[var(--text)]">{t.name}</span>
+                  <span className="status-chip">{t.base}</span>
                   {t.base === 'turn' && t.turn_protocol && (
-                    <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300">
+                    <span className="status-chip status-chip-muted">
                       turn/{t.turn_protocol}
                     </span>
                   )}
                   {t.listen && (
-                    <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900 dark:text-green-300">
+                    <span className="status-chip">
                       listener{t.listen_port ? ` :${t.listen_port}` : ''}
                     </span>
                   )}
@@ -420,51 +420,51 @@ export default function TransportsTab() {
                     </span>
                   )}
                   {typeof t.active_sessions === 'number' && t.active_sessions > 0 && (
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                    <span className="status-chip status-chip-muted">
                       {t.active_sessions} sessions
                     </span>
                   )}
                   {t.proxy_type && t.proxy_type !== 'none' && (
-                    <span className="rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300">
+                    <span className="status-chip status-chip-muted">
                       via {t.proxy_type}
                     </span>
                   )}
                 </div>
                 <div className="flex shrink-0 gap-1">
-                  <button onClick={() => handleEdit(t)} className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-blue-600 dark:hover:bg-gray-700 dark:hover:text-blue-400">
+                  <button onClick={() => handleEdit(t)} className="ghost-button">
                     <Edit3 className="h-4 w-4" />
                   </button>
-                  <button onClick={() => handleDelete(t.id)} className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-red-600 dark:hover:bg-gray-700 dark:hover:text-red-400">
+                  <button onClick={() => handleDelete(t.id)} className="ghost-button ghost-button-danger">
                     <Trash2 className="h-4 w-4" />
                   </button>
                 </div>
               </div>
 
               {expanded[t.id] && (
-                <dl className="grid grid-cols-2 gap-x-4 gap-y-1 border-t border-gray-100 px-4 py-3 text-xs dark:border-gray-700 sm:grid-cols-3">
-                  {t.listen_addrs && <><dt className="text-gray-500 dark:text-gray-400">Addresses</dt><dd className="text-gray-800 dark:text-gray-200 col-span-2">{t.listen_addrs}</dd></>}
-                  {t.external_endpoint && <><dt className="text-gray-500 dark:text-gray-400">Client Endpoint</dt><dd className="text-gray-800 dark:text-gray-200 col-span-2">{t.external_endpoint}</dd></>}
-                  {t.url && <><dt className="text-gray-500 dark:text-gray-400">URL</dt><dd className="text-gray-800 dark:text-gray-200 col-span-2">{t.url}</dd></>}
-                  {t.ws_path && <><dt className="text-gray-500 dark:text-gray-400">Path</dt><dd className="text-gray-800 dark:text-gray-200">{t.ws_path}</dd></>}
-                  {t.connect_host && <><dt className="text-gray-500 dark:text-gray-400">Connect Host</dt><dd className="text-gray-800 dark:text-gray-200">{t.connect_host}</dd></>}
-                  {t.host_header && <><dt className="text-gray-500 dark:text-gray-400">Host Header</dt><dd className="text-gray-800 dark:text-gray-200">{t.host_header}</dd></>}
-                  {t.ws_advertise_http3 && <><dt className="text-gray-500 dark:text-gray-400">HTTP/3</dt><dd className="text-gray-800 dark:text-gray-200">advertised via Alt-Svc</dd></>}
-                  {t.turn_server && <><dt className="text-gray-500 dark:text-gray-400">TURN Server</dt><dd className="text-gray-800 dark:text-gray-200 col-span-2">{t.turn_server}</dd></>}
-                  {t.turn_protocol && t.base === 'turn' && <><dt className="text-gray-500 dark:text-gray-400">TURN Protocol</dt><dd className="text-gray-800 dark:text-gray-200">{t.turn_protocol}</dd></>}
-                  {t.turn_realm && <><dt className="text-gray-500 dark:text-gray-400">TURN Realm</dt><dd className="text-gray-800 dark:text-gray-200">{t.turn_realm}</dd></>}
-                  {t.turn_permissions && <><dt className="text-gray-500 dark:text-gray-400">TURN Permissions</dt><dd className="text-gray-800 dark:text-gray-200 col-span-2">{t.turn_permissions}</dd></>}
-                  {t.turn_no_create_permission && <><dt className="text-gray-500 dark:text-gray-400">TURN Mode</dt><dd className="text-gray-800 dark:text-gray-200">no create_permission</dd></>}
-                  {t.turn_include_wg_public_key && <><dt className="text-gray-500 dark:text-gray-400">TURN Username</dt><dd className="text-gray-800 dark:text-gray-200">includes WireGuard public key</dd></>}
-                  {t.tls_cert_file && <><dt className="text-gray-500 dark:text-gray-400">Cert</dt><dd className="text-gray-800 dark:text-gray-200 col-span-2">{t.tls_cert_file}</dd></>}
-                  {t.tls_ca_file && <><dt className="text-gray-500 dark:text-gray-400">CA</dt><dd className="text-gray-800 dark:text-gray-200 col-span-2">{t.tls_ca_file}</dd></>}
-                  {t.tls_verify_peer && <><dt className="text-gray-500 dark:text-gray-400">TLS</dt><dd className="text-gray-800 dark:text-gray-200">verify peer</dd></>}
-                  {t.proxy_server && <><dt className="text-gray-500 dark:text-gray-400">Proxy</dt><dd className="text-gray-800 dark:text-gray-200">{t.proxy_type} {t.proxy_server}</dd></>}
-                  {t.connected && <><dt className="text-gray-500 dark:text-gray-400">Connected</dt><dd className="text-gray-800 dark:text-gray-200">yes</dd></>}
-                  {t.carrier_protocol && <><dt className="text-gray-500 dark:text-gray-400">Carrier</dt><dd className="text-gray-800 dark:text-gray-200">{t.carrier_protocol}</dd></>}
-                  {t.carrier_local_addr && <><dt className="text-gray-500 dark:text-gray-400">Local Addr</dt><dd className="text-gray-800 dark:text-gray-200 col-span-2">{t.carrier_local_addr}</dd></>}
-                  {t.carrier_remote_addr && <><dt className="text-gray-500 dark:text-gray-400">Remote Addr</dt><dd className="text-gray-800 dark:text-gray-200 col-span-2">{t.carrier_remote_addr}</dd></>}
-                  {t.relay_addr && <><dt className="text-gray-500 dark:text-gray-400">Relay Addr</dt><dd className="text-gray-800 dark:text-gray-200 col-span-2">{t.relay_addr}</dd></>}
-                  {typeof t.active_sessions === 'number' && <><dt className="text-gray-500 dark:text-gray-400">Active Sessions</dt><dd className="text-gray-800 dark:text-gray-200">{t.active_sessions}</dd></>}
+                <dl className="grid grid-cols-2 gap-x-4 gap-y-1 border-t border-[var(--border)] px-4 py-3 text-xs sm:grid-cols-3">
+                  {t.listen_addrs && <><dt className="text-[var(--muted)]">Addresses</dt><dd className="col-span-2 text-[var(--text)]">{t.listen_addrs}</dd></>}
+                  {t.external_endpoint && <><dt className="text-[var(--muted)]">Client Endpoint</dt><dd className="col-span-2 text-[var(--text)]">{t.external_endpoint}</dd></>}
+                  {t.url && <><dt className="text-[var(--muted)]">URL</dt><dd className="col-span-2 text-[var(--text)]">{t.url}</dd></>}
+                  {t.ws_path && <><dt className="text-[var(--muted)]">Path</dt><dd className="text-[var(--text)]">{t.ws_path}</dd></>}
+                  {t.connect_host && <><dt className="text-[var(--muted)]">Connect Host</dt><dd className="text-[var(--text)]">{t.connect_host}</dd></>}
+                  {t.host_header && <><dt className="text-[var(--muted)]">Host Header</dt><dd className="text-[var(--text)]">{t.host_header}</dd></>}
+                  {t.ws_advertise_http3 && <><dt className="text-[var(--muted)]">HTTP/3</dt><dd className="text-[var(--text)]">advertised via Alt-Svc</dd></>}
+                  {t.turn_server && <><dt className="text-[var(--muted)]">TURN Server</dt><dd className="col-span-2 text-[var(--text)]">{t.turn_server}</dd></>}
+                  {t.turn_protocol && t.base === 'turn' && <><dt className="text-[var(--muted)]">TURN Protocol</dt><dd className="text-[var(--text)]">{t.turn_protocol}</dd></>}
+                  {t.turn_realm && <><dt className="text-[var(--muted)]">TURN Realm</dt><dd className="text-[var(--text)]">{t.turn_realm}</dd></>}
+                  {t.turn_permissions && <><dt className="text-[var(--muted)]">TURN Permissions</dt><dd className="col-span-2 text-[var(--text)]">{t.turn_permissions}</dd></>}
+                  {t.turn_no_create_permission && <><dt className="text-[var(--muted)]">TURN Mode</dt><dd className="text-[var(--text)]">no create_permission</dd></>}
+                  {t.turn_include_wg_public_key && <><dt className="text-[var(--muted)]">TURN Username</dt><dd className="text-[var(--text)]">includes WireGuard public key</dd></>}
+                  {t.tls_cert_file && <><dt className="text-[var(--muted)]">Cert</dt><dd className="col-span-2 text-[var(--text)]">{t.tls_cert_file}</dd></>}
+                  {t.tls_ca_file && <><dt className="text-[var(--muted)]">CA</dt><dd className="col-span-2 text-[var(--text)]">{t.tls_ca_file}</dd></>}
+                  {t.tls_verify_peer && <><dt className="text-[var(--muted)]">TLS</dt><dd className="text-[var(--text)]">verify peer</dd></>}
+                  {t.proxy_server && <><dt className="text-[var(--muted)]">Proxy</dt><dd className="text-[var(--text)]">{t.proxy_type} {t.proxy_server}</dd></>}
+                  {t.connected && <><dt className="text-[var(--muted)]">Connected</dt><dd className="text-[var(--text)]">yes</dd></>}
+                  {t.carrier_protocol && <><dt className="text-[var(--muted)]">Carrier</dt><dd className="text-[var(--text)]">{t.carrier_protocol}</dd></>}
+                  {t.carrier_local_addr && <><dt className="text-[var(--muted)]">Local Addr</dt><dd className="col-span-2 text-[var(--text)]">{t.carrier_local_addr}</dd></>}
+                  {t.carrier_remote_addr && <><dt className="text-[var(--muted)]">Remote Addr</dt><dd className="col-span-2 text-[var(--text)]">{t.carrier_remote_addr}</dd></>}
+                  {t.relay_addr && <><dt className="text-[var(--muted)]">Relay Addr</dt><dd className="col-span-2 text-[var(--text)]">{t.relay_addr}</dd></>}
+                  {typeof t.active_sessions === 'number' && <><dt className="text-[var(--muted)]">Active Sessions</dt><dd className="text-[var(--text)]">{t.active_sessions}</dd></>}
                 </dl>
               )}
             </div>

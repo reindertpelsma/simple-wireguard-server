@@ -240,7 +240,7 @@ export default function ConfigModal({ peer, onClose }) {
                     <span>QR import</span>
                   </div>
                   <div className="rounded-3xl bg-white p-4">
-                    <QRCodeSVG value={config} size={256} className="mx-auto h-auto w-full" />
+                    <QRCodeSVG value={displayedConfig} size={256} className="mx-auto h-auto w-full" />
                   </div>
                 </div>
 

@@ -37,13 +37,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/glebarez/sqlite"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/bcrypt"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	"gopkg.in/yaml.v3"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
-	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -165,18 +165,18 @@ func discoverMTU() int {
 
 // --- GORM Models ---
 type User struct {
-	ID           uint    `gorm:"primaryKey" json:"id"`
-	Username     string  `gorm:"uniqueIndex;not null" json:"username"`
-	PasswordHash string  `json:"-"`
-	Token        string  `gorm:"uniqueIndex" json:"token,omitempty"`
+	ID            uint      `gorm:"primaryKey" json:"id"`
+	Username      string    `gorm:"uniqueIndex;not null" json:"username"`
+	PasswordHash  string    `json:"-"`
+	Token         string    `gorm:"uniqueIndex" json:"token,omitempty"`
 	TokenIssuedAt time.Time `json:"-"`
 	SudoAuthAt    time.Time `json:"-"`
-	IsAdmin      bool    `gorm:"default:false" json:"is_admin"`
-	MaxConfigs   int     `gorm:"default:10" json:"max_configs"`
-	TOTPSecret   string  `json:"-"`
-	TOTPEnabled  bool    `gorm:"default:false" json:"totp_enabled"`
-	OIDCProvider string  `json:"oidc_provider,omitempty"`
-	OIDCSubject  *string `gorm:"uniqueIndex" json:"oidc_subject,omitempty"`
+	IsAdmin       bool      `gorm:"default:false" json:"is_admin"`
+	MaxConfigs    int       `gorm:"default:10" json:"max_configs"`
+	TOTPSecret    string    `json:"-"`
+	TOTPEnabled   bool      `gorm:"default:false" json:"totp_enabled"`
+	OIDCProvider  string    `json:"oidc_provider,omitempty"`
+	OIDCSubject   *string   `gorm:"uniqueIndex" json:"oidc_subject,omitempty"`
 	// PrimaryGroup is the required group that determines this user's
 	// IP subnet. All peer configs created for this user inherit it.
 	PrimaryGroup string `json:"primary_group,omitempty"`
@@ -244,7 +244,7 @@ type ACLRule struct {
 	ID        uint   `gorm:"primaryKey" json:"id"`
 	ListName  string `gorm:"not null" json:"list_name"` // inbound, outbound, relay
 	Name      string `json:"name,omitempty"`
-	Action    string `gorm:"not null" json:"action"`    // allow, deny
+	Action    string `gorm:"not null" json:"action"` // allow, deny
 	Src       string `json:"src,omitempty"`
 	SrcUsers  string `json:"src_users,omitempty"`
 	SrcTags   string `json:"src_tags,omitempty"`
@@ -565,6 +565,7 @@ func main() {
 
 	*daemonPath = findDaemon(*systemMode)
 	*turnDaemonPath = findTurnDaemon()
+	installManagedShutdownHandler()
 
 	if *manageDaemon {
 		// Set MTU if not manually overridden in DB already
@@ -604,6 +605,7 @@ func main() {
 	mux.HandleFunc("POST /api/login", handleLogin)
 	mux.HandleFunc("POST /api/logout", authMiddleware(handleLogout))
 	mux.HandleFunc("POST /api/auth/reauth", authMiddleware(handleReauth))
+	mux.HandleFunc("POST /api/auth/lock", authMiddleware(handleLockSudo))
 	mux.HandleFunc("GET /api/auth/methods", handleAuthMethods)
 	mux.HandleFunc("GET /api/auth/hmac-nonce", authMiddleware(handleHMACNonce))
 	mux.HandleFunc("GET /api/me", authMiddleware(handleMe))
@@ -881,22 +883,22 @@ func initGlobalSettings() {
 		// Routes pushed to clients (AllowedIPs for the server peer entry)
 		"client_allowed_ips": "0.0.0.0/0, ::/0",
 		// Reverse-proxy and browser access settings
-		"trusted_proxy_cidrs":         "",
-		"web_base_url":                "",
-		"http_proxy_access_enabled":   "false",
-		"socket_proxy_enabled":        "false",
-		"socket_proxy_http_port":      strconv.Itoa(findFreePort()),
-		"auth_sudo_timeout_seconds":   "600",
+		"trusted_proxy_cidrs":          "",
+		"web_base_url":                 "",
+		"http_proxy_access_enabled":    "false",
+		"socket_proxy_enabled":         "false",
+		"socket_proxy_http_port":       strconv.Itoa(findFreePort()),
+		"auth_sudo_timeout_seconds":    "600",
 		"auth_session_timeout_seconds": strconv.Itoa(int((7 * 24 * time.Hour).Seconds())),
-		"exposed_services_enabled":    "true",
-		"service_auth_cookie_seconds": strconv.Itoa(int((12 * time.Hour).Seconds())),
-		"turn_hosting_enabled":        "false",
-		"turn_hosting_realm":          "open-relay.local",
-		"turn_hosting_relay_ip":       "",
-		"turn_allow_user_credentials": "false",
-		"turn_max_user_credentials":   "3",
-		"turn_user_port_start":        "40000",
-		"turn_user_port_end":          "49999",
+		"exposed_services_enabled":     "true",
+		"service_auth_cookie_seconds":  strconv.Itoa(int((12 * time.Hour).Seconds())),
+		"turn_hosting_enabled":         "false",
+		"turn_hosting_realm":           "open-relay.local",
+		"turn_hosting_relay_ip":        "",
+		"turn_allow_user_credentials":  "false",
+		"turn_max_user_credentials":    "3",
+		"turn_user_port_start":         "40000",
+		"turn_user_port_end":           "49999",
 	}
 
 	if ep := os.Getenv("WG_PUBLIC_ENDPOINT"); ep != "" {
@@ -2181,6 +2183,10 @@ func handleGetACLs(w http.ResponseWriter, r *http.Request) {
 
 func normalizeACLRule(a *ACLRule) {
 	a.Name = strings.TrimSpace(a.Name)
+	a.ListName = strings.ToLower(strings.TrimSpace(a.ListName))
+	a.Action = strings.ToLower(strings.TrimSpace(a.Action))
+	a.Proto = strings.ToLower(strings.TrimSpace(a.Proto))
+	a.DPort = strings.TrimSpace(a.DPort)
 	a.Src = joinCSVList(splitCSVList(a.Src))
 	a.SrcUsers = joinCSVList(splitCSVList(a.SrcUsers))
 	a.SrcTags = joinCSVList(splitCSVList(a.SrcTags))
@@ -2191,6 +2197,165 @@ func normalizeACLRule(a *ACLRule) {
 	a.DstPeers = joinCSVList(splitCSVList(a.DstPeers))
 }
 
+func validateACLRule(a ACLRule) error {
+	switch a.ListName {
+	case "inbound", "outbound", "relay":
+	default:
+		return fmt.Errorf("invalid ACL list %q", a.ListName)
+	}
+
+	switch a.Action {
+	case "allow", "deny":
+	default:
+		return fmt.Errorf("invalid ACL action %q", a.Action)
+	}
+
+	switch a.Proto {
+	case "", "any", "tcp", "udp", "icmp":
+	default:
+		return fmt.Errorf("invalid ACL protocol %q", a.Proto)
+	}
+
+	if err := validateACLPortSpec(a.DPort); err != nil {
+		return err
+	}
+	if err := validateACLRawTargets(splitCSVList(a.Src), false, "source"); err != nil {
+		return err
+	}
+	if err := validateACLRawTargets(splitCSVList(a.Dst), true, "destination"); err != nil {
+		return err
+	}
+
+	var usernames []string
+	gdb.Model(&User{}).Pluck("username", &usernames)
+	if err := validateACLNamedSelectors(splitCSVList(a.SrcUsers), usernames, "source user"); err != nil {
+		return err
+	}
+	if err := validateACLNamedSelectors(splitCSVList(a.DstUsers), usernames, "destination user"); err != nil {
+		return err
+	}
+
+	var groupNames []string
+	gdb.Model(&Group{}).Pluck("name", &groupNames)
+	if err := validateACLNamedSelectors(splitCSVList(a.SrcTags), groupNames, "source group"); err != nil {
+		return err
+	}
+	if err := validateACLNamedSelectors(splitCSVList(a.DstTags), groupNames, "destination group"); err != nil {
+		return err
+	}
+
+	var peerNames []string
+	gdb.Model(&Peer{}).Pluck("name", &peerNames)
+	if err := validateACLNamedSelectors(splitCSVList(a.SrcPeers), peerNames, "source peer"); err != nil {
+		return err
+	}
+	if err := validateACLNamedSelectors(splitCSVList(a.DstPeers), peerNames, "destination peer"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateACLNamedSelectors(values, known []string, label string) error {
+	if len(values) == 0 {
+		return nil
+	}
+	allowed := make(map[string]struct{}, len(known))
+	for _, value := range known {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value != "" {
+			allowed[value] = struct{}{}
+		}
+	}
+	for _, value := range values {
+		key := strings.ToLower(strings.TrimSpace(value))
+		if key == "" {
+			continue
+		}
+		if _, ok := allowed[key]; !ok {
+			return fmt.Errorf("unknown %s %q", label, value)
+		}
+	}
+	return nil
+}
+
+func validateACLRawTargets(values []string, allowHostnames bool, label string) error {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, err := netip.ParsePrefix(value); err == nil {
+			continue
+		}
+		if _, err := netip.ParseAddr(value); err == nil {
+			continue
+		}
+		if allowHostnames && validACLHostname(value) {
+			continue
+		}
+		return fmt.Errorf("invalid %s selector %q", label, value)
+	}
+	return nil
+}
+
+func validACLHostname(value string) bool {
+	value = strings.TrimSpace(strings.TrimSuffix(value, "."))
+	if value == "" || strings.ContainsAny(value, "/:@?[]\\") {
+		return false
+	}
+	labels := strings.Split(value, ".")
+	for _, label := range labels {
+		if label == "" || len(label) > 63 {
+			return false
+		}
+		if label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, r := range label {
+			switch {
+			case r >= 'a' && r <= 'z':
+			case r >= 'A' && r <= 'Z':
+			case r >= '0' && r <= '9':
+			case r == '-':
+			default:
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func validateACLPortSpec(spec string) error {
+	spec = strings.TrimSpace(spec)
+	if spec == "" || spec == "*" {
+		return nil
+	}
+	parsePort := func(raw string) (int, error) {
+		port, err := strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil || port < 1 || port > 65535 {
+			return 0, fmt.Errorf("invalid ACL port %q", raw)
+		}
+		return port, nil
+	}
+	if strings.Contains(spec, "-") {
+		parts := strings.SplitN(spec, "-", 2)
+		from, err := parsePort(parts[0])
+		if err != nil {
+			return fmt.Errorf("invalid ACL port range %q", spec)
+		}
+		to, err := parsePort(parts[1])
+		if err != nil {
+			return fmt.Errorf("invalid ACL port range %q", spec)
+		}
+		if from > to {
+			return fmt.Errorf("invalid ACL port range %q", spec)
+		}
+		return nil
+	}
+	_, err := parsePort(spec)
+	return err
+}
+
 func handleCreateACL(w http.ResponseWriter, r *http.Request) {
 	var a ACLRule
 	if err := json.NewDecoder(r.Body).Decode(&a); err != nil {
@@ -2198,6 +2363,10 @@ func handleCreateACL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	normalizeACLRule(&a)
+	if err := validateACLRule(a); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	// Assign sort_order = max + 1
 	var maxOrder int
 	gdb.Model(&ACLRule{}).Where("list_name = ?", a.ListName).Select("COALESCE(MAX(sort_order), -1)").Scan(&maxOrder)
@@ -2219,6 +2388,10 @@ func handleUpdateACL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	normalizeACLRule(&a)
+	if err := validateACLRule(a); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	gdb.Save(&a)
 	pushACLsToDaemon()
 	w.WriteHeader(http.StatusOK)
