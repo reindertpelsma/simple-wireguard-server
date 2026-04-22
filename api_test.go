@@ -14,6 +14,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -23,14 +24,29 @@ import (
 )
 
 func setupTestDB(t *testing.T) {
+	t.Helper()
 	var err error
 	bootstrapState = bootstrapInfo{}
 	lastPushedACLHash = ""
-	gdb, err = gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if gdb != nil {
+		if sqlDB, dbErr := gdb.DB(); dbErr == nil {
+			_ = sqlDB.Close()
+		}
+	}
+	dsn := filepath.Join(t.TempDir(), "test.db")
+	gdb, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{}, &AccessProxyCredential{}, &ExposedService{}, &PolicyTag{}, &TunnelForward{}, &TURNHostedListener{}, &TURNCredential{})
+	sqlDB, err := gdb.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+	if err := gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{}, &AccessProxyCredential{}, &ExposedService{}, &PolicyTag{}, &TunnelForward{}, &TURNHostedListener{}, &TURNCredential{}); err != nil {
+		t.Fatal(err)
+	}
 	initGlobalSettings()
 }
 
