@@ -25,6 +25,7 @@ Build a secure WireGuard server, relay hub, or small peer-synced mesh without Do
    docker compose build
    docker compose up -d
    ```
+   Release tags also publish `ghcr.io/reindertpelsma/simple-wireguard-server:<tag>`.
 5. **Login:** Open `http://localhost:8080` and sign in with `admin` plus the password printed in the terminal. 
 
 ## Why use it
