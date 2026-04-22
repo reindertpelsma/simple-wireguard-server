@@ -45,16 +45,9 @@ Release tags also publish:
 
 - Supported and repeatedly tested:
   - Linux, macOS, Windows, FreeBSD
-- Experimental:
-  - OpenBSD
-    - backend and SQLite path work
-    - source builds currently reuse a prebuilt `dist/` because Vite is not yet native there
 
-On OpenBSD, use:
-
-```bash
-UWG_UI_SKIP_FRONTEND_BUILD=1 ./compile.sh
-```
+See [docs/testing.md](docs/testing.md) for OpenBSD notes and the current
+source-build caveat there.
 
 ## Documentation
 

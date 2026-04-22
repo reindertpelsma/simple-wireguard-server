@@ -69,6 +69,14 @@ The main suite covers:
   end-to-end smoke path of login -> peer create -> config fetch -> `/proxy`
   through a real managed `uwgsocks` child process.
 
+## Platform Notes
+
+- Linux, macOS, Windows, and FreeBSD are the primary tested platforms.
+- OpenBSD is usable, but still best treated as experimental for the UI server:
+  - the backend and SQLite path work
+  - native source builds currently reuse a prebuilt frontend `dist/`
+  - use `UWG_UI_SKIP_FRONTEND_BUILD=1 ./compile.sh` there
+
 `scripts/iperf_loopback.sh` builds `uwgsocks` when needed, writes temporary
 demo WireGuard configs, starts two binaries, exposes an iperf3 server through a
 server-side reverse-forward and a client-side local TCP/UDP forward, runs TCP
