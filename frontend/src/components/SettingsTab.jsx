@@ -44,13 +44,15 @@ function inputTypeFor(key, value) {
   return 'text';
 }
 
-export default function SettingsTab({ sudoActive = false, onRequireSudo = () => {} }) {
+export default function SettingsTab({ sudoActive = false, onRequireSudo = () => {}, onRefreshContext = () => {} }) {
   const [config, setConfig] = useState({});
+  const [proxyCreds, setProxyCreds] = useState([]);
   const [yamlInfo, setYamlInfo] = useState({ enabled: false, custom: '', effective: '', generated: '' });
   const [customYaml, setCustomYaml] = useState('');
   const [customEnabled, setCustomEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
 
   useEffect(() => {
     fetchData();
@@ -61,12 +63,18 @@ export default function SettingsTab({ sudoActive = false, onRequireSudo = () => 
     try {
       const currentConfig = await api.getAdminConfig();
       setConfig(currentConfig);
+      if (currentConfig.http_proxy_access_enabled === 'true') {
+        setProxyCreds(await api.getAdminProxyCredentials());
+      } else {
+        setProxyCreds([]);
+      }
       const currentYaml = await api.getYAMLConfig();
       setYamlInfo(currentYaml);
       setCustomYaml(currentYaml.custom || currentYaml.effective || currentYaml.generated || '');
       setCustomEnabled(!!currentYaml.enabled);
+      setError('');
     } catch (err) {
-      console.error(err);
+      setError(err.message || 'Failed to load settings');
     } finally {
       setLoading(false);
     }
@@ -78,9 +86,11 @@ export default function SettingsTab({ sudoActive = false, onRequireSudo = () => 
     try {
       await api.updateGlobalConfig(config);
       alert('Config updated. Some daemon changes may still need a restart.');
-      fetchData();
+      await fetchData();
+      await onRefreshContext();
+      setError('');
     } catch (err) {
-      alert(err.message);
+      setError(err.message || 'Failed to save settings');
     }
   };
 
@@ -91,8 +101,9 @@ export default function SettingsTab({ sudoActive = false, onRequireSudo = () => 
       await api.saveYAMLConfig({ enabled: customEnabled, custom: customYaml });
       alert('YAML configuration saved.');
       await fetchData();
+      setError('');
     } catch (err) {
-      alert(err.message);
+      setError(err.message || 'Failed to save YAML configuration');
     } finally {
       setBusy('');
     }
@@ -105,8 +116,10 @@ export default function SettingsTab({ sudoActive = false, onRequireSudo = () => 
     try {
       await api.restartDaemon();
       alert('Daemon restarted and peers re-synced.');
+      await onRefreshContext();
+      setError('');
     } catch (err) {
-      alert(err.message);
+      setError(err.message || 'Failed to restart daemon');
     } finally {
       setBusy('');
     }
@@ -138,6 +151,7 @@ export default function SettingsTab({ sudoActive = false, onRequireSudo = () => 
         {!sudoActive && (
           <div className="mb-4 error-banner">Settings are currently read-only. Use “Unlock changes” in the header before editing configuration.</div>
         )}
+        {error ? <div className="mb-4 error-banner">{error}</div> : null}
 
         <form onSubmit={handleUpdate} className="grid gap-4 md:grid-cols-2">
           {editableConfigEntries.map(([key, value]) => (
@@ -240,6 +254,25 @@ export default function SettingsTab({ sudoActive = false, onRequireSudo = () => 
               <button type="submit" className="primary-button"><Save size={16} /><span>Save access settings</span></button>
             </div>
           </form>
+          {config.http_proxy_access_enabled === 'true' ? (
+            <div className="mt-5 rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] p-4">
+              <h5 className="text-base font-semibold text-[var(--text)]">Issued proxy credentials</h5>
+              <p className="mt-1 text-sm text-[var(--muted)]">Admins can review every issued proxy credential here. Users manage their own credentials from Profile.</p>
+              <div className="mt-4 space-y-2">
+                {proxyCreds.length === 0 ? (
+                  <p className="text-sm text-[var(--muted)]">No proxy credentials issued yet.</p>
+                ) : proxyCreds.map((cred) => (
+                  <div key={cred.id} className="flex items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface-soft)] p-3">
+                    <div className="flex-1">
+                      <p className="font-mono text-sm font-semibold">{cred.username}</p>
+                      {cred.owner_username ? <p className="text-xs text-[var(--muted)]">Owner: {cred.owner_username}</p> : null}
+                      <p className="text-xs text-[var(--muted)]">{cred.name} · created {new Date(cred.created_at).toLocaleDateString()}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
         </div>
 

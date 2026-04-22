@@ -1,5 +1,30 @@
 const API_BASE = ''; // Same origin
 
+async function readErrorMessage(response) {
+  const contentType = response.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    try {
+      const parsed = await response.json();
+      if (typeof parsed === 'string' && parsed.trim()) return parsed.trim();
+      if (parsed?.error) return String(parsed.error);
+      if (parsed?.message) return String(parsed.message);
+    } catch {
+      // fall through
+    }
+  }
+  try {
+    const text = await response.text();
+    return text || response.statusText;
+  } catch {
+    return response.statusText || 'Request failed';
+  }
+}
+
+function redirectToLogin() {
+  localStorage.removeItem('token');
+  window.location.href = '/login';
+}
+
 export async function request(path, options = {}) {
   const {
     auth = true,
@@ -15,34 +40,36 @@ export async function request(path, options = {}) {
     ...extraHeaders,
   };
 
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...fetchOptions,
-    headers,
-  });
+  let response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      ...fetchOptions,
+      headers,
+    });
+  } catch (err) {
+    throw new Error(err?.message || 'Network request failed');
+  }
 
   if (response.status === 401 && redirectOnAuth) {
-    localStorage.removeItem('token');
-    window.location.href = '/login';
+    redirectToLogin();
     throw new Error('Unauthorized');
   }
 
   if (response.status === 428) {
-    const text = await response.text();
-    let message = 'Re-authentication required';
-    try {
-      const parsed = text ? JSON.parse(text) : {};
-      message = parsed.error || message;
-    } catch {
-      message = text || message;
-    }
-    const authError = new Error(message);
+    const authError = new Error((await readErrorMessage(response)) || 'Re-authentication required');
     authError.code = 'sudo_required';
     throw authError;
   }
 
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(error || response.statusText);
+    const message = (await readErrorMessage(response)) || response.statusText;
+    if (redirectOnAuth && /not logged in|unauthorized/i.test(message)) {
+      redirectToLogin();
+      throw new Error('Unauthorized');
+    }
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
   }
 
   const contentType = response.headers.get('content-type');

@@ -25,6 +25,8 @@ var publicConfigKeys = []string{
 	"e2e_encryption_enabled",
 	"enable_client_ipv6",
 	"endpoints_visible",
+	"exposed_services_enabled",
+	"http_proxy_access_enabled",
 	"socket_proxy_enabled",
 	"global_mtu",
 	"public_keys_visible",

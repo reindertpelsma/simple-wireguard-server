@@ -19,6 +19,7 @@ export default function ServicesTab({ isAdmin = false, sudoActive = false, onReq
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
   const [serviceForm, setServiceForm] = useState(EMPTY_SERVICE_FORM);
 
   async function loadServices() {
@@ -31,11 +32,14 @@ export default function ServicesTab({ isAdmin = false, sudoActive = false, onReq
     async function load() {
       try {
         const data = isAdmin ? await api.getExposedServices() : await api.getVisibleServices();
-        if (!cancelled) setServices(data || []);
+        if (!cancelled) {
+          setServices(data || []);
+          setError('');
+        }
       } catch (err) {
         if (!cancelled) {
-          console.error(err);
           setServices([]);
+          setError(err.message || 'Failed to load services');
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -53,8 +57,9 @@ export default function ServicesTab({ isAdmin = false, sudoActive = false, onReq
       await api.createExposedService(serviceForm);
       setServiceForm(EMPTY_SERVICE_FORM);
       await loadServices();
+      setError('');
     } catch (err) {
-      alert(err.message);
+      setError(err.message || 'Failed to create service');
     } finally {
       setBusy('');
     }
@@ -67,8 +72,9 @@ export default function ServicesTab({ isAdmin = false, sudoActive = false, onReq
     try {
       await api.deleteExposedService(id);
       await loadServices();
+      setError('');
     } catch (err) {
-      alert(err.message);
+      setError(err.message || 'Failed to delete service');
     } finally {
       setBusy('');
     }
@@ -88,6 +94,7 @@ export default function ServicesTab({ isAdmin = false, sudoActive = false, onReq
             <h3 className="text-2xl font-black tracking-tight">Published services</h3>
           </div>
         </div>
+        {error ? <div className="mb-4 error-banner">{error}</div> : null}
         {services.length === 0 ? (
           <div className="state-shell py-12 text-[var(--muted)]">No services available</div>
         ) : (

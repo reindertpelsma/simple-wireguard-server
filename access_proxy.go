@@ -179,6 +179,11 @@ func handleListExposedServices(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleListVisibleServices(w http.ResponseWriter, r *http.Request) {
+	if getConfig("exposed_services_enabled") != "true" {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]visibleExposedService{})
+		return
+	}
 	user, ok := currentUserFromRequest(w, r)
 	if !ok {
 		return

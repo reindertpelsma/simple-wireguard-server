@@ -98,6 +98,22 @@ func TestCreateMyTURNCredentialSyncsTurnDaemonUsers(t *testing.T) {
 	}
 }
 
+func TestAdminCanCreateTURNCredentialWhenSelfServiceDisabled(t *testing.T) {
+	setupTestDB(t)
+	setTestConfig(t, "turn_hosting_enabled", "true")
+	setTestConfig(t, "turn_allow_user_credentials", "false")
+	user, _ := createTestUser(t, "admin", true)
+
+	body := bytes.NewBufferString(`{"name":"TURN relay"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/me/turn-credentials", body)
+	req.Header.Set("X-User-Id", fmt.Sprint(user.ID))
+	w := httptest.NewRecorder()
+	handleCreateMyTURNCredential(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected admin bypass to create credential, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestHandleGetMyTURNCredentialsMarksConnected(t *testing.T) {
 	setupTestDB(t)
 	user, _ := createTestUser(t, "alice", false)

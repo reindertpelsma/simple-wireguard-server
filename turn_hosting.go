@@ -234,7 +234,11 @@ func handleCreateMyTURNCredential(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !turnHostingEnabled() || !turnUserCredentialsAllowed() {
+	if !turnHostingEnabled() {
+		http.Error(w, "TURN hosting is disabled", http.StatusForbidden)
+		return
+	}
+	if !turnUserCredentialsAllowed() && !userIsAdmin(user) {
 		http.Error(w, "TURN self-service is disabled", http.StatusForbidden)
 		return
 	}

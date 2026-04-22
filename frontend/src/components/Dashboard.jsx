@@ -27,6 +27,7 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
   const [activeTab, setActiveTab] = useState('peers');
   const [me, setMe] = useState(null);
   const [publicConfig, setPublicConfig] = useState({});
+  const [visibleServiceCount, setVisibleServiceCount] = useState(0);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedPeer, setSelectedPeer] = useState(null);
   const [currentUsername, setCurrentUsername] = useState('');
@@ -39,10 +40,21 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
       setMe(meData || null);
       setPublicConfig(cfg || {});
       setCurrentUsername(meData?.username || '');
+      if ((cfg?.exposed_services_enabled === 'true') && !meData?.can_manage_settings) {
+        try {
+          const services = await api.getVisibleServices();
+          setVisibleServiceCount(Array.isArray(services) ? services.length : 0);
+        } catch {
+          setVisibleServiceCount(0);
+        }
+      } else {
+        setVisibleServiceCount(0);
+      }
     } catch {
       setMe(null);
       setPublicConfig({});
       setCurrentUsername('');
+      setVisibleServiceCount(0);
     }
   }, []);
 
@@ -57,6 +69,20 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
         setMe(meData || null);
         setPublicConfig(cfg || {});
         setCurrentUsername(meData?.username || '');
+        if ((cfg?.exposed_services_enabled === 'true') && !meData?.can_manage_settings) {
+          try {
+            const services = await api.getVisibleServices();
+            if (!cancelled) {
+              setVisibleServiceCount(Array.isArray(services) ? services.length : 0);
+            }
+          } catch {
+            if (!cancelled) {
+              setVisibleServiceCount(0);
+            }
+          }
+        } else {
+          setVisibleServiceCount(0);
+        }
       } catch {
         if (cancelled) {
           return;
@@ -64,6 +90,7 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
         setMe(null);
         setPublicConfig({});
         setCurrentUsername('');
+        setVisibleServiceCount(0);
       }
     }
     loadContext();
@@ -75,15 +102,26 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
   const isAdmin = !!me?.can_manage_settings;
   const canManageUsers = !!me?.can_manage_users;
   const sudoActive = !!me?.sudo_active;
-  const turnAvailable = isAdmin || Number(publicConfig.turn_listener_count || 0) > 0;
+  const turnEnabled = publicConfig.turn_hosting_enabled === 'true';
+  const turnSelfService = publicConfig.turn_allow_user_credentials === 'true';
+  const turnAvailable = turnEnabled && (isAdmin || turnSelfService);
+  const servicesEnabled = publicConfig.exposed_services_enabled === 'true';
+  const servicesAvailable = servicesEnabled && (isAdmin || visibleServiceCount > 0);
 
   const visibleTabs = tabs.filter((tab) => {
     if (tab.id === 'users') return canManageUsers;
     if (tab.id === 'acls' || tab.id === 'settings') return isAdmin;
     if (tab.id === 'turn') return turnAvailable;
+    if (tab.id === 'services') return servicesAvailable;
     return !tab.adminOnly || isAdmin;
   });
   const activeTabMeta = visibleTabs.find((tab) => tab.id === activeTab) || visibleTabs[0];
+
+  useEffect(() => {
+    if (!visibleTabs.some((tab) => tab.id === activeTab) && visibleTabs[0]) {
+      setActiveTab(visibleTabs[0].id);
+    }
+  }, [activeTab, visibleTabs]);
 
   const handleLogout = async () => {
     try {
@@ -212,7 +250,7 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
         {activeTab === 'acls'       && <ACLsTab />}
         {activeTab === 'turn'       && <TurnTab isAdmin={isAdmin} sudoActive={sudoActive} onRequireSudo={() => setSudoModalOpen(true)} />}
         {activeTab === 'users'      && <UsersTab me={me} />}
-        {activeTab === 'settings'   && <SettingsTab sudoActive={sudoActive} onRequireSudo={() => setSudoModalOpen(true)} />}
+        {activeTab === 'settings'   && <SettingsTab sudoActive={sudoActive} onRequireSudo={() => setSudoModalOpen(true)} onRefreshContext={refreshContext} />}
       </main>
 
       <footer className="px-4 pb-10 text-center text-sm text-[var(--muted)] sm:px-6 lg:px-8">

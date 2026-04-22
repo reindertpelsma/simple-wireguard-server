@@ -13,6 +13,7 @@ export default function ProfileTab({ me: meProp, sudoActive = false, onRequireSu
   const [totpCode, setTotpCode] = useState('');
   const [showQR, setShowQR] = useState(false);
   const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
   const [turnForm, setTurnForm] = useState({ name: 'TURN relay', wireguard_public_key: '' });
   const [proxyCredName, setProxyCredName] = useState('Proxy access');
 
@@ -23,22 +24,33 @@ export default function ProfileTab({ me: meProp, sudoActive = false, onRequireSu
   const fetchData = useCallback(async () => {
     try {
       const [meData, cfg] = await Promise.all([api.getMe(), api.getPublicConfig()]);
-      const credData = meData?.can_manage_settings ? await api.getAdminProxyCredentials() : await api.getMyProxyCredentials();
+      let loadError = '';
       setMe(meData);
       onRefreshMe();
-      setCreds(credData);
       setPublicConfig(cfg || {});
+      if ((cfg || {}).http_proxy_access_enabled === 'true') {
+        const credData = meData?.can_manage_settings ? await api.getAdminProxyCredentials() : await api.getMyProxyCredentials();
+        setCreds(credData || []);
+      } else {
+        setCreds([]);
+      }
       if ((cfg || {}).turn_hosting_enabled === 'true') {
         try {
-          setTurnCreds(await api.getMyTURNCredentials());
-        } catch {
+          if (meData?.can_manage_settings) {
+            setTurnCreds(await api.getAdminTURNCredentials());
+          } else {
+            setTurnCreds(await api.getMyTURNCredentials());
+          }
+        } catch (err) {
           setTurnCreds([]);
+          loadError = err.message || 'Failed to load TURN credentials';
         }
       } else {
         setTurnCreds([]);
       }
+      setError(loadError);
     } catch (err) {
-      console.error(err);
+      setError(err.message || 'Failed to load profile data');
     }
   }, [onRefreshMe]);
 
@@ -78,8 +90,9 @@ export default function ProfileTab({ me: meProp, sudoActive = false, onRequireSu
       setTotpSetup(res);
       setTotpCode('');
       setShowQR(true);
+      setError('');
     } catch (err) {
-      alert(err.message);
+      setError(err.message || 'Failed to start 2FA setup');
     } finally {
       setBusy('');
     }
@@ -94,8 +107,9 @@ export default function ProfileTab({ me: meProp, sudoActive = false, onRequireSu
       setTotpCode('');
       setMe(await api.getMe());
       alert('Two-factor authentication enabled.');
+      setError('');
     } catch (err) {
-      alert(err.message);
+      setError(err.message || 'Failed to enable two-factor authentication');
     } finally {
       setBusy('');
     }
@@ -109,8 +123,9 @@ export default function ProfileTab({ me: meProp, sudoActive = false, onRequireSu
       await api.disableTOTP();
       setMe(await api.getMe());
       setTotpSetup(null);
+      setError('');
     } catch (err) {
-      alert(err.message);
+      setError(err.message || 'Failed to disable two-factor authentication');
     } finally {
       setBusy('');
     }
@@ -125,8 +140,9 @@ export default function ProfileTab({ me: meProp, sudoActive = false, onRequireSu
       setProxyCredName('Proxy access');
       const nextCreds = me?.can_manage_settings ? await api.getAdminProxyCredentials() : await api.getMyProxyCredentials();
       setCreds(nextCreds);
+      setError('');
     } catch (err) {
-      alert(err.message);
+      setError(err.message || 'Failed to create proxy credential');
     } finally {
       setBusy('');
     }
@@ -143,8 +159,9 @@ export default function ProfileTab({ me: meProp, sudoActive = false, onRequireSu
         await api.deleteMyProxyCredential(id);
         setCreds(await api.getMyProxyCredentials());
       }
+      setError('');
     } catch (err) {
-      alert(err.message);
+      setError(err.message || 'Failed to delete proxy credential');
     }
   };
 
@@ -154,9 +171,10 @@ export default function ProfileTab({ me: meProp, sudoActive = false, onRequireSu
     try {
       const res = await api.createMyTURNCredential(turnForm);
       setCreatedTurnCred(res);
-      setTurnCreds(await api.getMyTURNCredentials());
+      setTurnCreds(me?.can_manage_settings ? await api.getAdminTURNCredentials() : await api.getMyTURNCredentials());
+      setError('');
     } catch (err) {
-      alert(err.message);
+      setError(err.message || 'Failed to create TURN credential');
     } finally {
       setBusy('');
     }
@@ -167,15 +185,18 @@ export default function ProfileTab({ me: meProp, sudoActive = false, onRequireSu
     if (!confirm('Delete this TURN credential?')) return;
     try {
       await api.deleteMyTURNCredential(id);
-      setTurnCreds(await api.getMyTURNCredentials());
+      setTurnCreds(me?.can_manage_settings ? await api.getAdminTURNCredentials() : await api.getMyTURNCredentials());
+      setError('');
     } catch (err) {
-      alert(err.message);
+      setError(err.message || 'Failed to delete TURN credential');
     }
   };
 
   const isOIDC = me?.oidc_login;
   const turnEnabled = publicConfig.turn_hosting_enabled === 'true';
   const turnSelfService = publicConfig.turn_allow_user_credentials === 'true';
+  const proxyEnabled = publicConfig.http_proxy_access_enabled === 'true';
+  const canCreateTurnCreds = !!me?.can_manage_settings || turnSelfService;
   const proxyBaseURL = String(publicConfig.web_base_url || window.location.origin || '').replace(/\/+$/, '');
   const proxyEndpoint = `${proxyBaseURL || window.location.origin}/proxy`;
 
@@ -188,6 +209,11 @@ export default function ProfileTab({ me: meProp, sudoActive = false, onRequireSu
           <div className="error-banner">Sensitive actions are locked. Use “Unlock changes” in the header before changing security settings or creating credentials.</div>
         </section>
       )}
+      {error ? (
+        <section className="panel p-6 col-span-full">
+          <div className="error-banner">{error}</div>
+        </section>
+      ) : null}
 
       {/* Identity */}
       <section className="panel p-6 col-span-full">
@@ -327,6 +353,7 @@ export default function ProfileTab({ me: meProp, sudoActive = false, onRequireSu
       )}
 
       {/* Proxy credentials */}
+      {proxyEnabled ? (
       <section className="panel p-6 col-span-full">
         <div className="mb-4 flex items-center gap-3">
           <div className="brand-badge"><KeyRound size={18} /></div>
@@ -377,6 +404,7 @@ export default function ProfileTab({ me: meProp, sudoActive = false, onRequireSu
           </button>
         </div>
       </section>
+      ) : null}
 
       {turnEnabled && (
         <section className="panel p-6 col-span-full">
@@ -415,6 +443,7 @@ export default function ProfileTab({ me: meProp, sudoActive = false, onRequireSu
                         <span className="status-chip status-chip-muted">idle</span>
                       )}
                     </div>
+                    {me?.can_manage_settings && cred.owner_username ? <p className="text-xs text-[var(--muted)]">Owner: {cred.owner_username}</p> : null}
                     <p className="text-xs text-[var(--muted)]">{cred.name} · port {cred.port}</p>
                     {Array.isArray(cred.profiles) && cred.profiles.length > 0 && (
                       <div className="mt-2 space-y-1">
@@ -424,13 +453,15 @@ export default function ProfileTab({ me: meProp, sudoActive = false, onRequireSu
                       </div>
                     )}
                   </div>
-                  <button type="button" onClick={() => handleDeleteTurnCred(cred.id)} className="ghost-button ghost-button-danger text-xs">Delete</button>
+                  {!me?.can_manage_settings ? (
+                    <button type="button" onClick={() => handleDeleteTurnCred(cred.id)} className="ghost-button ghost-button-danger text-xs">Delete</button>
+                  ) : null}
                 </div>
               </div>
             ))}
           </div>
 
-          {turnSelfService ? (
+          {canCreateTurnCreds ? (
             <div className="space-y-3 rounded-2xl border border-[var(--border)] bg-[var(--surface-soft)] p-4">
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="space-y-1.5">

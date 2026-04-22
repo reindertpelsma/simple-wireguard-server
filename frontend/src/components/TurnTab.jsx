@@ -65,9 +65,12 @@ export default function TurnTab({ isAdmin = false, sudoActive = false, onRequire
         const next = await loadData();
         if (!cancelled) {
           applyData(next);
+          setError('');
         }
       } catch (err) {
-        console.error(err);
+        if (!cancelled) {
+          setError(err.message || 'Failed to load TURN data');
+        }
       }
     }
     run();
@@ -116,8 +119,13 @@ export default function TurnTab({ isAdmin = false, sudoActive = false, onRequire
   const handleDelete = async (id) => {
     if (!sudoActive) return onRequireSudo();
     if (!confirm('Delete this TURN listener?')) return;
-    await api.deleteTURNListener(id);
-    applyData(await loadData());
+    try {
+      await api.deleteTURNListener(id);
+      applyData(await loadData());
+      setError('');
+    } catch (err) {
+      setError(err.message || 'Failed to delete TURN listener');
+    }
   };
 
   const handleCreateCredential = async () => {
@@ -138,6 +146,7 @@ export default function TurnTab({ isAdmin = false, sudoActive = false, onRequire
     try {
       await api.deleteMyTURNCredential(id);
       applyData(await loadData());
+      setError('');
     } catch (err) {
       setError(err.message);
     }
@@ -145,12 +154,14 @@ export default function TurnTab({ isAdmin = false, sudoActive = false, onRequire
 
   const activeCount = Array.isArray(status.sessions) ? status.sessions.length : 0;
   const turnSelfService = publicConfig.turn_allow_user_credentials === 'true';
+  const canCreateOwnCredential = isAdmin || turnSelfService;
 
   return (
     <div className="space-y-6">
       <div className="rounded-3xl border border-[var(--border)] bg-[var(--surface-soft)] px-4 py-3 text-sm text-[var(--text)]">
         Hosted TURN listeners are managed as a separate daemon. Listener changes restart that TURN process; user TURN credentials sync live where possible.
       </div>
+      {error ? <div className="error-banner">{error}</div> : null}
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -332,7 +343,7 @@ export default function TurnTab({ isAdmin = false, sudoActive = false, onRequire
             </div>
           ))}
         </div>
-        {turnSelfService ? (
+        {canCreateOwnCredential ? (
           <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--surface-soft)] p-4">
             <div className="space-y-3">
               <div>
