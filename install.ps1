@@ -39,11 +39,11 @@ function Get-AssetName($product, $arch) {
   }
 }
 
-function Get-ReleaseUrl($repo) {
+function Get-DownloadUrl($repo, $asset) {
   if ($Version -eq "latest") {
-    return "$ApiBase/repos/$repo/releases/latest"
+    return "https://github.com/$repo/releases/latest/download/$asset"
   }
-  return "$ApiBase/repos/$repo/releases/tags/$Version"
+  return "https://github.com/$repo/releases/download/$Version/$asset"
 }
 
 function Ensure-UserPath($dir) {
@@ -74,13 +74,8 @@ if ($needUwgsocks -and -not (Get-Command uwgsocks -ErrorAction SilentlyContinue)
 foreach ($p in $Product) {
   $repo = Get-Repo $p
   $asset = Get-AssetName $p $arch
-  $meta = Invoke-RestMethod -Headers @{ Accept = "application/vnd.github+json" } -Uri (Get-ReleaseUrl $repo)
-  $download = $meta.assets | Where-Object { $_.name -eq $asset } | Select-Object -First 1
-  if (-not $download) {
-    throw "release asset not found: $asset"
-  }
   $dst = Join-Path $Prefix (Get-BinaryName $p)
-  Invoke-WebRequest -Uri $download.browser_download_url -OutFile $dst
+  Invoke-WebRequest -Headers @{ "User-Agent" = "uwgsocks-ui-installer" } -Uri (Get-DownloadUrl $repo $asset) -OutFile $dst
   Write-Host "installed $asset to $dst"
 }
 
