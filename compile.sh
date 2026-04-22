@@ -17,12 +17,18 @@ if ! command -v go >/dev/null 2>&1; then
   exit 127
 fi
 
-export CGO_ENABLED=0
-
 # Detect OS
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
-if [ "$ARCH" == "x86_64" ]; then ARCH="amd64"; fi
+if [ "$ARCH" = "x86_64" ]; then ARCH="amd64"; fi
+
+if [ "${CGO_ENABLED:-}" = "" ]; then
+    if [ "$OS" = "openbsd" ]; then
+        export CGO_ENABLED=1
+    else
+        export CGO_ENABLED=0
+    fi
+fi
 
 if [ ! -f "./uwgsocks" ]; then
     if [ -d "./userspace-wireguard-socks" ]; then
@@ -44,8 +50,9 @@ if [ ! -f "./uwgsocks" ]; then
                     echo "uwgsocks not found, either clone as sub repo in this folder, put it on the parent folder, or make this a sub folder of the uwgsocks"
                     echo "Continuing building without uwgsocks"
                 fi
+            else
+                cp ../uwgsocks .
             fi
-            cp ../uwgsocks .
         fi
     fi
 fi
@@ -75,13 +82,26 @@ if ! command -v npm >/dev/null 2>&1; then
   done
 fi
 
-if [ -d "frontend" ]; then
+if [ "${UWG_UI_SKIP_FRONTEND_BUILD:-0}" = "1" ]; then
+    if [ ! -f "./dist/index.html" ]; then
+        echo "UWG_UI_SKIP_FRONTEND_BUILD=1 was set but ./dist is missing. Provide a prebuilt dist/ first." >&2
+        exit 1
+    fi
+    echo "Skipping frontend build and using existing ./dist"
+elif [ -d "frontend" ]; then
     rm -rf frontend/dist 2> /dev/null || /bin/true
-    cd frontend && npm install && npm run build
-    cd ../
-    rm -rf dist 2> /dev/null || /bin/true
-    mkdir -p dist
-    cp -r frontend/dist/* ./dist/
+    if (cd frontend && npm install && npm run build); then
+        rm -rf dist 2> /dev/null || /bin/true
+        mkdir -p dist
+        cp -r frontend/dist/* ./dist/
+    else
+        echo "Frontend build failed." >&2
+        if [ -f "./dist/index.html" ]; then
+            echo "Using existing ./dist as fallback." >&2
+        else
+            exit 1
+        fi
+    fi
 else
     echo "Source frontend dir not found. Skipping frontend build (hope dist exists)."
 fi

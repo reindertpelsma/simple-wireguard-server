@@ -11,6 +11,9 @@ Build a secure WireGuard server, relay hub, or small peer-synced mesh without Do
    ```bash
    ./compile.sh
    ```
+   On OpenBSD, native Vite builds are not currently available. Reuse a prebuilt
+   `dist/` bundle and run `UWG_UI_SKIP_FRONTEND_BUILD=1 ./compile.sh`. OpenBSD
+   source builds use the cgo SQLite driver instead of the pure-Go SQLite stack.
 
    Or see the release pages on both userspace-wireguard-socks and this repository, ensure you have at least uwgsocks and uwgsocks-ui binaries
 3. **Run (Default SQLite + Auto-discovery):**

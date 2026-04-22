@@ -1,9 +1,9 @@
-//go:build !(linux && (mips || mipsle)) && !openbsd
+//go:build openbsd
 
 package main
 
 import (
-	"github.com/glebarez/sqlite"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 

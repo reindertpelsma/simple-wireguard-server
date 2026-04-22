@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -37,7 +36,11 @@ func setupTestDB(t *testing.T) {
 		gdb = nil
 	}
 	dsn := filepath.Join(t.TempDir(), "test.db")
-	gdb, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	dialer, err := sqliteDialector(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gdb, err = gorm.Open(dialer, &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
