@@ -28,10 +28,13 @@ func setupTestDB(t *testing.T) {
 	var err error
 	bootstrapState = bootstrapInfo{}
 	lastPushedACLHash = ""
+	oldManage := *manageDaemon
+	*manageDaemon = false
 	if gdb != nil {
 		if sqlDB, dbErr := gdb.DB(); dbErr == nil {
 			_ = sqlDB.Close()
 		}
+		gdb = nil
 	}
 	dsn := filepath.Join(t.TempDir(), "test.db")
 	gdb, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{})
@@ -44,6 +47,16 @@ func setupTestDB(t *testing.T) {
 	}
 	sqlDB.SetMaxOpenConns(1)
 	sqlDB.SetMaxIdleConns(1)
+	t.Cleanup(func() {
+		_ = stopManagedTURNDaemon(100 * time.Millisecond)
+		*manageDaemon = oldManage
+		if gdb != nil {
+			if current, dbErr := gdb.DB(); dbErr == nil {
+				_ = current.Close()
+			}
+			gdb = nil
+		}
+	})
 	if err := gdb.AutoMigrate(&User{}, &Peer{}, &GlobalConfig{}, &ACLRule{}, &SharedConfigLink{}, &TransportConfig{}, &AccessProxyCredential{}, &ExposedService{}, &PolicyTag{}, &TunnelForward{}, &TURNHostedListener{}, &TURNCredential{}); err != nil {
 		t.Fatal(err)
 	}
