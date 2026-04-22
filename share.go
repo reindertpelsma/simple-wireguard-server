@@ -4,9 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -95,9 +93,7 @@ func handleCreateShareLink(w http.ResponseWriter, r *http.Request) {
 		OneUse    bool       `json:"one_use"`
 		ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	}
-	err := json.NewDecoder(r.Body).Decode(&req)
-	if err != nil && !errors.Is(err, io.EOF) {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	if !decodeOptionalJSONRequest(w, r, &req, smallJSONBodyLimit) {
 		return
 	}
 

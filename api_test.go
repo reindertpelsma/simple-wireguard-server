@@ -778,8 +778,10 @@ func TestYAMLOverrideIsStoredAndWritten(t *testing.T) {
 	oldDataDir := *dataDir
 	*dataDir = t.TempDir()
 	defer func() { *dataDir = oldDataDir }()
+	admin, _ := createTestUser(t, "yaml-admin", true)
+	setTestSessionTimes(t, admin.ID, time.Now(), time.Now())
 
-	custom := "api:\n  listen: unix:///tmp/custom.sock\nwireguard:\n  addresses:\n    - 100.64.77.1/24\n"
+	custom := "api:\n  listen: unix:///tmp/custom.sock\nwireguard:\n  private_key: super-secret\n  addresses:\n    - 100.64.77.1/24\n"
 	body, _ := json.Marshal(map[string]interface{}{
 		"enabled": true,
 		"custom":  custom,
@@ -802,6 +804,7 @@ func TestYAMLOverrideIsStoredAndWritten(t *testing.T) {
 	}
 
 	req = httptest.NewRequest("GET", "/api/admin/yaml", nil)
+	req.Header.Set("X-User-Id", fmt.Sprint(admin.ID))
 	w = httptest.NewRecorder()
 	handleGetYAMLConfig(w, req)
 	if w.Code != http.StatusOK {
@@ -811,8 +814,42 @@ func TestYAMLOverrideIsStoredAndWritten(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if !response.Enabled || response.Custom != custom || response.Effective != custom {
+	if !response.Enabled || response.Custom != "" || response.Effective != "" {
 		t.Fatalf("unexpected YAML response: %+v", response)
+	}
+	if strings.Contains(response.Generated, "super-secret") {
+		t.Fatalf("generated preview leaked secret: %q", response.Generated)
+	}
+
+	req = httptest.NewRequest("GET", "/api/admin/yaml?sensitive=1&include_effective=1", nil)
+	req.Header.Set("X-User-Id", fmt.Sprint(admin.ID))
+	w = httptest.NewRecorder()
+	handleGetYAMLConfig(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 fetching sensitive YAML, got %d", w.Code)
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Custom != custom {
+		t.Fatalf("expected custom YAML for sudo session, got %+v", response)
+	}
+	if strings.Contains(response.Effective, "super-secret") || !strings.Contains(response.Effective, "<redacted>") {
+		t.Fatalf("effective preview was not redacted: %q", response.Effective)
+	}
+}
+
+func TestOversizedLoginRequestRejected(t *testing.T) {
+	setupTestDB(t)
+	body, _ := json.Marshal(map[string]string{
+		"username": strings.Repeat("a", int(smallJSONBodyLimit)),
+		"password": "password",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	handleLogin(w, req)
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 for oversized login, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

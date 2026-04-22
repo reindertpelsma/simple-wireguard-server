@@ -99,6 +99,40 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
     };
   }, []);
 
+  useEffect(() => {
+    const expiry = me?.sudo_expires_at ? new Date(me.sudo_expires_at).getTime() : 0;
+    if (!me?.sudo_active || !expiry) {
+      return undefined;
+    }
+    const delay = Math.max(0, expiry - Date.now());
+    const timer = window.setTimeout(() => {
+      refreshContext();
+    }, delay + 250);
+    return () => window.clearTimeout(timer);
+  }, [me?.sudo_active, me?.sudo_expires_at, refreshContext]);
+
+  useEffect(() => {
+    const handleSudoRequired = () => {
+      refreshContext();
+    };
+    window.addEventListener('uwg:sudo-required', handleSudoRequired);
+    return () => window.removeEventListener('uwg:sudo-required', handleSudoRequired);
+  }, [refreshContext]);
+
+  useEffect(() => {
+    const handleForegroundSync = () => {
+      if (document.visibilityState === 'visible') {
+        refreshContext();
+      }
+    };
+    window.addEventListener('focus', handleForegroundSync);
+    document.addEventListener('visibilitychange', handleForegroundSync);
+    return () => {
+      window.removeEventListener('focus', handleForegroundSync);
+      document.removeEventListener('visibilitychange', handleForegroundSync);
+    };
+  }, [refreshContext]);
+
   const isAdmin = !!me?.can_manage_settings;
   const canManageUsers = !!me?.can_manage_users;
   const sudoActive = !!me?.sudo_active;

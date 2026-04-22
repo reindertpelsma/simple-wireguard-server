@@ -56,6 +56,7 @@ export async function request(path, options = {}) {
   }
 
   if (response.status === 428) {
+    window.dispatchEvent(new CustomEvent('uwg:sudo-required'));
     const authError = new Error((await readErrorMessage(response)) || 'Re-authentication required');
     authError.code = 'sudo_required';
     throw authError;
@@ -136,7 +137,13 @@ export const api = {
 
   getPublicConfig: () => request('/api/config/public'),
   getAdminConfig: () => request('/api/admin/config'),
-  getYAMLConfig: () => request('/api/admin/yaml'),
+  getYAMLConfig: ({ sensitive = false, includeEffective = false } = {}) => {
+    const params = new URLSearchParams();
+    if (sensitive) params.set('sensitive', '1');
+    if (includeEffective) params.set('include_effective', '1');
+    const suffix = params.toString();
+    return request(`/api/admin/yaml${suffix ? `?${suffix}` : ''}`);
+  },
 
   // Peer Updates
   updatePeer: (id, data) => 

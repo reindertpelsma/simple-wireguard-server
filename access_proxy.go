@@ -103,12 +103,13 @@ func registerAccessProxyRoutes(mux *http.ServeMux) {
 }
 
 type visibleExposedService struct {
-	ID        uint   `json:"id"`
-	Name      string `json:"name"`
-	Host      string `json:"host"`
-	AuthMode  string `json:"auth_mode"`
-	TargetURL string `json:"target_url,omitempty"`
-	URL       string `json:"url"`
+	ID         uint   `json:"id"`
+	Name       string `json:"name"`
+	Host       string `json:"host"`
+	AuthMode   string `json:"auth_mode"`
+	TargetURL  string `json:"target_url,omitempty"`
+	URL        string `json:"url"`
+	ConnectURL string `json:"connect_url,omitempty"`
 }
 
 func handleListAccessProxyCredentials(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +128,9 @@ func handleCreateAccessProxyCredential(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Enabled  *bool  `json:"enabled"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if !decodeOptionalJSONRequest(w, r, &req, smallJSONBodyLimit) {
+		return
+	}
 	username := strings.TrimSpace(req.Username)
 	if username == "" {
 		username = "proxy-" + randomSecret(6)
@@ -174,8 +177,20 @@ func handleDeleteAccessProxyCredential(w http.ResponseWriter, r *http.Request) {
 func handleListExposedServices(w http.ResponseWriter, r *http.Request) {
 	var services []ExposedService
 	gdb.Order("host asc").Find(&services)
+	out := make([]visibleExposedService, 0, len(services))
+	for _, svc := range services {
+		out = append(out, visibleExposedService{
+			ID:         svc.ID,
+			Name:       svc.Name,
+			Host:       svc.Host,
+			AuthMode:   svc.AuthMode,
+			TargetURL:  svc.TargetURL,
+			URL:        serviceExternalScheme(r) + "://" + svc.Host,
+			ConnectURL: "/service-auth?service=" + url.QueryEscape(svc.Name),
+		})
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(services)
+	json.NewEncoder(w).Encode(out)
 }
 
 func handleListVisibleServices(w http.ResponseWriter, r *http.Request) {
@@ -195,12 +210,13 @@ func handleListVisibleServices(w http.ResponseWriter, r *http.Request) {
 	for _, svc := range services {
 		if userIsAdmin(user) {
 			out = append(out, visibleExposedService{
-				ID:        svc.ID,
-				Name:      svc.Name,
-				Host:      svc.Host,
-				AuthMode:  svc.AuthMode,
-				TargetURL: svc.TargetURL,
-				URL:       serviceExternalScheme(r) + "://" + svc.Host,
+				ID:         svc.ID,
+				Name:       svc.Name,
+				Host:       svc.Host,
+				AuthMode:   svc.AuthMode,
+				TargetURL:  svc.TargetURL,
+				URL:        serviceExternalScheme(r) + "://" + svc.Host,
+				ConnectURL: "/service-auth?service=" + url.QueryEscape(svc.Name),
 			})
 			continue
 		}
@@ -222,11 +238,12 @@ func handleListVisibleServices(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		out = append(out, visibleExposedService{
-			ID:       svc.ID,
-			Name:     svc.Name,
-			Host:     svc.Host,
-			AuthMode: svc.AuthMode,
-			URL:      serviceExternalScheme(r) + "://" + svc.Host,
+			ID:         svc.ID,
+			Name:       svc.Name,
+			Host:       svc.Host,
+			AuthMode:   svc.AuthMode,
+			URL:        serviceExternalScheme(r) + "://" + svc.Host,
+			ConnectURL: "/service-auth?service=" + url.QueryEscape(svc.Name),
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -235,8 +252,7 @@ func handleListVisibleServices(w http.ResponseWriter, r *http.Request) {
 
 func handleCreateExposedService(w http.ResponseWriter, r *http.Request) {
 	var svc ExposedService
-	if err := json.NewDecoder(r.Body).Decode(&svc); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	if !decodeJSONRequest(w, r, &svc, mediumJSONBodyLimit) {
 		return
 	}
 	normalizeExposedService(&svc)
@@ -262,8 +278,7 @@ func handleUpdateExposedService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req ExposedService
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	if !decodeJSONRequest(w, r, &req, mediumJSONBodyLimit) {
 		return
 	}
 	req.ID = svc.ID
@@ -385,6 +400,16 @@ func handleServiceAuthStart(w http.ResponseWriter, r *http.Request) {
 	}
 	var user User
 	if err := gdb.First(&user, "token = ?", token).Error; err != nil {
+		http.Redirect(w, r, "/login?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
+		return
+	}
+	if userSessionExpired(user, time.Now()) {
+		gdb.Model(&user).Updates(map[string]interface{}{
+			"token":           "",
+			"token_issued_at": time.Time{},
+			"sudo_auth_at":    time.Time{},
+		})
+		clearSessionCookie(w)
 		http.Redirect(w, r, "/login?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
 		return
 	}

@@ -1009,7 +1009,7 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 		var user User
 		if err := gdb.First(&user, "token = ?", token).Error; err != nil {
-			log.Printf("Auth failed: Invalid token %q for %s %s from %s: %v", token, r.Method, r.URL.Path, clientIPForRequest(r), err)
+			log.Printf("Auth failed: Invalid token for %s %s from %s: %v", r.Method, r.URL.Path, clientIPForRequest(r), err)
 			http.Error(w, "Invalid Token", http.StatusUnauthorized)
 			return
 		}
@@ -1135,8 +1135,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 		TOTPCode string `json:"totp_code"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	if !decodeJSONRequest(w, r, &req, smallJSONBodyLimit) {
 		return
 	}
 
@@ -1210,8 +1209,7 @@ func handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 			LatencyMillis int   `json:"latency_ms"`
 		} `json:"traffic_shaper"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	if !decodeJSONRequest(w, r, &req, mediumJSONBodyLimit) {
 		return
 	}
 
@@ -1563,7 +1561,9 @@ func handleUpdatePeer(w http.ResponseWriter, r *http.Request) {
 			LatencyMillis int   `json:"latency_ms"`
 		} `json:"traffic_shaper"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if !decodeJSONRequest(w, r, &req, mediumJSONBodyLimit) {
+		return
+	}
 
 	if req.Name != nil {
 		peer.Name = *req.Name
@@ -1701,7 +1701,9 @@ func uwgRequestWithContext(ctx context.Context, method, path string, body io.Rea
 
 func handleUpdateGlobalConfig(w http.ResponseWriter, r *http.Request) {
 	var req map[string]string
-	json.NewDecoder(r.Body).Decode(&req)
+	if !decodeJSONRequest(w, r, &req, mediumJSONBodyLimit) {
+		return
+	}
 	turnChanged := false
 	for k, v := range req {
 		if k == "server_privkey" {
@@ -1745,8 +1747,7 @@ func handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		Groups       string `json:"groups"` // additional groups
 		PrimaryGroup string `json:"primary_group"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	if !decodeJSONRequest(w, r, &req, mediumJSONBodyLimit) {
 		return
 	}
 
@@ -1814,8 +1815,7 @@ func handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		MaxConfigs   *int    `json:"max_configs"`
 		Password     *string `json:"password"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	if !decodeJSONRequest(w, r, &req, mediumJSONBodyLimit) {
 		return
 	}
 	// Accept both "groups" and legacy "tags" for the additional groups field.
@@ -1928,8 +1928,7 @@ func handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 		Password    *string `json:"password"`
 		OldPassword *string `json:"old_password"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	if !decodeJSONRequest(w, r, &req, smallJSONBodyLimit) {
 		return
 	}
 	if req.Password != nil {
@@ -1973,8 +1972,7 @@ func handleCreateMyProxyCredential(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name string `json:"name"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	if !decodeJSONRequest(w, r, &req, smallJSONBodyLimit) {
 		return
 	}
 	if req.Name == "" {
@@ -2059,8 +2057,7 @@ func handleGetTags(w http.ResponseWriter, r *http.Request) {
 
 func handleCreateTag(w http.ResponseWriter, r *http.Request) {
 	var tag Group
-	if err := json.NewDecoder(r.Body).Decode(&tag); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	if !decodeJSONRequest(w, r, &tag, mediumJSONBodyLimit) {
 		return
 	}
 	tag.Name = normalizeGroupName(tag.Name)
@@ -2127,8 +2124,7 @@ func handleUpdateTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req Group
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	if !decodeJSONRequest(w, r, &req, mediumJSONBodyLimit) {
 		return
 	}
 	// Built-in groups keep their names; others can be renamed.
@@ -2358,8 +2354,7 @@ func validateACLPortSpec(spec string) error {
 
 func handleCreateACL(w http.ResponseWriter, r *http.Request) {
 	var a ACLRule
-	if err := json.NewDecoder(r.Body).Decode(&a); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	if !decodeJSONRequest(w, r, &a, mediumJSONBodyLimit) {
 		return
 	}
 	normalizeACLRule(&a)
@@ -2383,8 +2378,7 @@ func handleUpdateACL(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Not found", http.StatusNotFound)
 		return
 	}
-	if err := json.NewDecoder(r.Body).Decode(&a); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	if !decodeJSONRequest(w, r, &a, mediumJSONBodyLimit) {
 		return
 	}
 	normalizeACLRule(&a)
@@ -2409,8 +2403,7 @@ func handleReorderACLs(w http.ResponseWriter, r *http.Request) {
 		ID        uint `json:"id"`
 		SortOrder int  `json:"sort_order"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	if !decodeJSONRequest(w, r, &req, mediumJSONBodyLimit) {
 		return
 	}
 	for _, item := range req {
@@ -2489,8 +2482,7 @@ func handleGetForwards(w http.ResponseWriter, r *http.Request) {
 
 func handleCreateForward(w http.ResponseWriter, r *http.Request) {
 	var f TunnelForward
-	if err := json.NewDecoder(r.Body).Decode(&f); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	if !decodeJSONRequest(w, r, &f, mediumJSONBodyLimit) {
 		return
 	}
 	if f.Proto == "" || f.Listen == "" || f.Target == "" {
@@ -2525,8 +2517,7 @@ func handleUpdateForward(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req TunnelForward
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	if !decodeJSONRequest(w, r, &req, mediumJSONBodyLimit) {
 		return
 	}
 	if req.Proto == "" || req.Listen == "" || req.Target == "" {
@@ -2602,7 +2593,10 @@ func handleGetTransports(w http.ResponseWriter, r *http.Request) {
 
 func handleCreateTransport(w http.ResponseWriter, r *http.Request) {
 	var t TransportConfig
-	if err := json.NewDecoder(r.Body).Decode(&t); err != nil || t.Name == "" || t.Base == "" {
+	if !decodeJSONRequest(w, r, &t, mediumJSONBodyLimit) {
+		return
+	}
+	if t.Name == "" || t.Base == "" {
 		http.Error(w, "Invalid request: name and base are required", http.StatusBadRequest)
 		return
 	}
@@ -2627,8 +2621,7 @@ func handleUpdateTransport(w http.ResponseWriter, r *http.Request) {
 	}
 	oldName := t.Name
 	var req TransportConfig
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	if !decodeJSONRequest(w, r, &req, mediumJSONBodyLimit) {
 		return
 	}
 	req.ID = t.ID

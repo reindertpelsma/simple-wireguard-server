@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func extractEmbeddedDist(target string) error {
@@ -111,9 +112,11 @@ func isFrontendAuthenticated(r *http.Request) bool {
 	if token == "" {
 		return false
 	}
-	var count int64
-	gdb.Model(&User{}).Where("token = ?", token).Count(&count)
-	return count > 0
+	var user User
+	if err := gdb.First(&user, "token = ?", token).Error; err != nil {
+		return false
+	}
+	return !userSessionExpired(user, time.Now())
 }
 
 func isSharedConfigReferer(r *http.Request) bool {

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -147,6 +148,42 @@ func TestServiceAuthFlowAndCORSGuard(t *testing.T) {
 	wrapRootHandler(http.NewServeMux()).ServeHTTP(w, req)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected CORS guarded POST to be rejected, got %d", w.Code)
+	}
+}
+
+func TestAdminExposedServicesIncludeConnectURL(t *testing.T) {
+	setupTestDB(t)
+	setTestConfig(t, "web_base_url", "https://wireguard.example.com")
+	svc := ExposedService{
+		Name:      "console",
+		Host:      "console.wireguard.example.com",
+		TargetURL: "http://100.64.0.20:8080",
+		AuthMode:  "login",
+	}
+	if err := gdb.Create(&svc).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/exposed-services", nil)
+	req.Host = "wireguard.example.com"
+	w := httptest.NewRecorder()
+	handleListExposedServices(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+
+	var services []visibleExposedService
+	if err := json.NewDecoder(w.Body).Decode(&services); err != nil {
+		t.Fatal(err)
+	}
+	if len(services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(services))
+	}
+	if services[0].URL == "" || services[0].ConnectURL == "" {
+		t.Fatalf("missing service URL fields: %+v", services[0])
+	}
+	if !strings.Contains(services[0].ConnectURL, "/service-auth?service=console") {
+		t.Fatalf("unexpected connect URL %q", services[0].ConnectURL)
 	}
 }
 

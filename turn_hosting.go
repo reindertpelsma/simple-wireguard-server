@@ -131,8 +131,7 @@ func handleListTURNListeners(w http.ResponseWriter, r *http.Request) {
 
 func handleCreateTURNListener(w http.ResponseWriter, r *http.Request) {
 	var listener TURNHostedListener
-	if err := json.NewDecoder(r.Body).Decode(&listener); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+	if !decodeJSONRequest(w, r, &listener, mediumJSONBodyLimit) {
 		return
 	}
 	normalizeTURNHostedListener(&listener)
@@ -159,8 +158,7 @@ func handleUpdateTURNListener(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req TURNHostedListener
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+	if !decodeJSONRequest(w, r, &req, mediumJSONBodyLimit) {
 		return
 	}
 	req.ID = listener.ID
@@ -247,8 +245,7 @@ func handleCreateMyTURNCredential(w http.ResponseWriter, r *http.Request) {
 		Name               string `json:"name"`
 		WireGuardPublicKey string `json:"wireguard_public_key"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+	if !decodeJSONRequest(w, r, &req, smallJSONBodyLimit) {
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)

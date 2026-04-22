@@ -202,8 +202,7 @@ func handleTOTPEnable(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Code string `json:"code"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	if !decodeJSONRequest(w, r, &req, smallJSONBodyLimit) {
 		return
 	}
 	if !verifyTOTPCode(decryptAtRest(user.TOTPSecret), req.Code, time.Now()) {
@@ -236,8 +235,7 @@ func handleReauth(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 		TOTPCode string `json:"totp_code"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	if !decodeJSONRequest(w, r, &req, smallJSONBodyLimit) {
 		return
 	}
 	if !verifyPassword(req.Password, user.PasswordHash) {

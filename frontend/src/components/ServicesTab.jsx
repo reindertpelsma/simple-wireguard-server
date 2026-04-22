@@ -22,6 +22,15 @@ export default function ServicesTab({ isAdmin = false, sudoActive = false, onReq
   const [error, setError] = useState('');
   const [serviceForm, setServiceForm] = useState(EMPTY_SERVICE_FORM);
 
+  const connectToService = (service) => {
+    const target = service.connect_url || service.url;
+    if (!target) {
+      setError('Service URL is unavailable');
+      return;
+    }
+    window.open(target, '_blank', 'noopener,noreferrer');
+  };
+
   async function loadServices() {
     const data = isAdmin ? await api.getExposedServices() : await api.getVisibleServices();
     setServices(data || []);
@@ -111,15 +120,14 @@ export default function ServicesTab({ isAdmin = false, sudoActive = false, onReq
                     ) : null}
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <a
-                      href={service.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                    <button
+                      type="button"
+                      onClick={() => connectToService(service)}
                       className="primary-button justify-center"
                     >
                       <ExternalLink size={16} />
                       <span>Connect</span>
-                    </a>
+                    </button>
                     {isAdmin ? (
                       <button
                         type="button"

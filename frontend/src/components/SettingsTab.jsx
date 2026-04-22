@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { FileText, Network, Power, Save } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Eye, FileText, Network, Power, Save } from 'lucide-react';
 import { api } from '../lib/api';
 import TransportsTab from './TransportsTab';
 import ForwardsTab from './ForwardsTab';
@@ -50,15 +50,13 @@ export default function SettingsTab({ sudoActive = false, onRequireSudo = () => 
   const [yamlInfo, setYamlInfo] = useState({ enabled: false, custom: '', effective: '', generated: '' });
   const [customYaml, setCustomYaml] = useState('');
   const [customEnabled, setCustomEnabled] = useState(false);
+  const [yamlEditorLoaded, setYamlEditorLoaded] = useState(false);
+  const [effectiveYaml, setEffectiveYaml] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const currentConfig = await api.getAdminConfig();
@@ -69,8 +67,17 @@ export default function SettingsTab({ sudoActive = false, onRequireSudo = () => 
         setProxyCreds([]);
       }
       const currentYaml = await api.getYAMLConfig();
-      setYamlInfo(currentYaml);
-      setCustomYaml(currentYaml.custom || currentYaml.effective || currentYaml.generated || '');
+      setYamlInfo({
+        enabled: !!currentYaml.enabled,
+        custom: '',
+        effective: '',
+        generated: currentYaml.generated || '',
+      });
+      if (!sudoActive) {
+        setYamlEditorLoaded(false);
+        setCustomYaml('');
+        setEffectiveYaml('');
+      }
       setCustomEnabled(!!currentYaml.enabled);
       setError('');
     } catch (err) {
@@ -78,7 +85,41 @@ export default function SettingsTab({ sudoActive = false, onRequireSudo = () => 
     } finally {
       setLoading(false);
     }
-  };
+  }, [sudoActive]);
+
+  const loadSensitiveYAML = useCallback(async ({ includeEffective = false } = {}) => {
+    const currentYaml = await api.getYAMLConfig({ sensitive: true, includeEffective });
+    setYamlInfo((prev) => ({
+      ...prev,
+      enabled: !!currentYaml.enabled,
+      custom: currentYaml.custom || '',
+      effective: includeEffective ? (currentYaml.effective || '') : prev.effective,
+      generated: currentYaml.generated || prev.generated,
+    }));
+    setCustomEnabled(!!currentYaml.enabled);
+    setCustomYaml(currentYaml.custom || '');
+    setYamlEditorLoaded(true);
+    if (includeEffective) {
+      setEffectiveYaml(currentYaml.effective || '');
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  useEffect(() => {
+    if (!sudoActive) {
+      setYamlEditorLoaded(false);
+      setCustomYaml('');
+      setEffectiveYaml('');
+      setYamlInfo((current) => ({ ...current, custom: '', effective: '' }));
+      return;
+    }
+    if (!yamlEditorLoaded) {
+      loadSensitiveYAML().catch((err) => setError(err.message || 'Failed to load editable YAML'));
+    }
+  }, [sudoActive, yamlEditorLoaded, loadSensitiveYAML]);
 
   const handleUpdate = async (event) => {
     event.preventDefault();
@@ -101,9 +142,23 @@ export default function SettingsTab({ sudoActive = false, onRequireSudo = () => 
       await api.saveYAMLConfig({ enabled: customEnabled, custom: customYaml });
       alert('YAML configuration saved.');
       await fetchData();
+      await loadSensitiveYAML();
       setError('');
     } catch (err) {
       setError(err.message || 'Failed to save YAML configuration');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const handleRevealEffective = async () => {
+    if (!sudoActive) return onRequireSudo();
+    setBusy('yaml-effective');
+    try {
+      await loadSensitiveYAML({ includeEffective: true });
+      setError('');
+    } catch (err) {
+      setError(err.message || 'Failed to load effective YAML');
     } finally {
       setBusy('');
     }
@@ -444,25 +499,48 @@ export default function SettingsTab({ sudoActive = false, onRequireSudo = () => 
             <input type="checkbox" checked={customEnabled} onChange={(event) => setCustomEnabled(event.target.checked)} />
             <span>Use this custom YAML instead of the generated canonical config</span>
           </label>
+          {!sudoActive ? (
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-soft)] px-4 py-3 text-sm text-[var(--muted)]">
+              YAML editing stays locked until you unlock sensitive actions. The preview below is redacted and does not include private key material.
+            </div>
+          ) : null}
           <textarea
             className="input-field min-h-[360px] resize-y font-mono text-sm leading-6"
-            value={customYaml}
+            value={sudoActive && yamlEditorLoaded ? customYaml : ''}
             spellCheck="false"
+            readOnly={!sudoActive || !yamlEditorLoaded}
+            placeholder={sudoActive ? (yamlEditorLoaded ? '' : 'Load editable YAML to inspect or modify the custom override.') : 'Unlock sensitive actions to load editable YAML.'}
             onChange={(event) => setCustomYaml(event.target.value)}
           />
           <div className="flex flex-wrap gap-3">
+            {sudoActive && !yamlEditorLoaded ? (
+              <button type="button" onClick={() => loadSensitiveYAML().catch((err) => setError(err.message || 'Failed to load editable YAML'))} className="secondary-button">
+                <FileText size={16} />
+                <span>Load editable YAML</span>
+              </button>
+            ) : null}
             <button type="button" onClick={handleSaveYaml} disabled={busy === 'yaml'} className="primary-button">
               <FileText size={16} />
               <span>{busy === 'yaml' ? 'Saving…' : 'Save YAML'}</span>
             </button>
-            <button type="button" onClick={() => setCustomYaml(yamlInfo.generated || yamlInfo.effective || '')} className="secondary-button">
-              Reset to generated
+            <button type="button" onClick={() => setCustomEnabled(false)} className="secondary-button">
+              Use generated config
+            </button>
+            <button type="button" onClick={handleRevealEffective} disabled={!sudoActive || busy === 'yaml-effective'} className="secondary-button">
+              <Eye size={16} />
+              <span>{busy === 'yaml-effective' ? 'Loading…' : 'Reveal effective YAML'}</span>
             </button>
           </div>
           <div>
-            <span className="field-label mb-2">Currently effective YAML</span>
-            <pre className="config-block max-h-[320px]">{yamlInfo.effective || yamlInfo.generated}</pre>
+            <span className="field-label mb-2">Generated preview</span>
+            <pre className="config-block max-h-[320px]">{yamlInfo.generated}</pre>
           </div>
+          {effectiveYaml ? (
+            <div>
+              <span className="field-label mb-2">Effective YAML preview</span>
+              <pre className="config-block max-h-[320px]">{effectiveYaml}</pre>
+            </div>
+          ) : null}
         </div>
       </section>
       </div>
