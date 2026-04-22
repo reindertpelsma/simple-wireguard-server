@@ -4,6 +4,11 @@ A rootless WireGuard control plane built on [uwgsocks](https://github.com/reinde
 
 Build a secure WireGuard server, relay hub, or small peer-synced mesh without Docker privileges, kernel modules, or system routing changes.
 
+Supported and repeatedly tested on Linux, macOS, Windows, and FreeBSD.
+OpenBSD works for the backend and SQLite path, but should still be treated as
+experimental because the frontend bundle is currently reused from a prebuilt
+`dist/` rather than built natively there.
+
 ## Quick Start (20 Seconds)
 
 1. **Build or download:**
