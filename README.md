@@ -26,7 +26,12 @@ Build a secure WireGuard server, relay hub, or small peer-synced mesh without Do
    docker compose up -d
    ```
    Release tags also publish `ghcr.io/reindertpelsma/simple-wireguard-server:<tag>`.
-5. **Login:** Open `http://localhost:8080` and sign in with `admin` plus the password printed in the terminal. 
+5. **Install script (Unix-like hosts):**
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/reindertpelsma/simple-wireguard-server/main/install.sh | sh
+   ```
+   This installs `uwgsocks-ui` and, if `uwgsocks` is not already present, also installs `uwgsocks` into `/usr/local/bin`.
+6. **Login:** Open `http://localhost:8080` and sign in with `admin` plus the password printed in the terminal. 
 
 ## Why use it
 
