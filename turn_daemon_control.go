@@ -206,6 +206,13 @@ func restartManagedTURNDaemonIfEnabled() {
 	}
 }
 
+func scheduleManagedTURNDaemonRestart() {
+	if !*manageDaemon {
+		return
+	}
+	go restartManagedTURNDaemonIfEnabled()
+}
+
 func generateTurnCanonicalYAML() {
 	_ = os.WriteFile(resolvePath("turn_canonical.yaml"), buildTurnCanonicalYAMLBytes(), 0o644)
 }

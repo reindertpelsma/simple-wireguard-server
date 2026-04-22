@@ -144,7 +144,7 @@ func handleCreateTURNListener(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	generateTurnCanonicalYAML()
-	go restartManagedTURNDaemonIfEnabled()
+	scheduleManagedTURNDaemonRestart()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(listener)
@@ -172,7 +172,7 @@ func handleUpdateTURNListener(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	generateTurnCanonicalYAML()
-	go restartManagedTURNDaemonIfEnabled()
+	scheduleManagedTURNDaemonRestart()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(req)
 }
@@ -181,7 +181,7 @@ func handleDeleteTURNListener(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
 	gdb.Delete(&TURNHostedListener{}, id)
 	generateTurnCanonicalYAML()
-	go restartManagedTURNDaemonIfEnabled()
+	scheduleManagedTURNDaemonRestart()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -289,7 +289,7 @@ func handleCreateMyTURNCredential(w http.ResponseWriter, r *http.Request) {
 	generateTurnCanonicalYAML()
 	if err := syncTURNCredentialsToDaemon(); err != nil {
 		log.Printf("TURN daemon sync failed after create, restarting: %v", err)
-		go restartManagedTURNDaemonIfEnabled()
+		scheduleManagedTURNDaemonRestart()
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -318,7 +318,7 @@ func handleDeleteMyTURNCredential(w http.ResponseWriter, r *http.Request) {
 	generateTurnCanonicalYAML()
 	if err := syncTURNCredentialsToDaemon(); err != nil {
 		log.Printf("TURN daemon sync failed after delete, restarting: %v", err)
-		go restartManagedTURNDaemonIfEnabled()
+		scheduleManagedTURNDaemonRestart()
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

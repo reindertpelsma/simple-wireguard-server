@@ -1722,7 +1722,7 @@ func handleUpdateGlobalConfig(w http.ResponseWriter, r *http.Request) {
 	generateTurnCanonicalYAML()
 	pushACLsToDaemon()
 	if turnChanged {
-		go restartManagedTURNDaemonIfEnabled()
+		scheduleManagedTURNDaemonRestart()
 	}
 	w.WriteHeader(http.StatusOK)
 }
