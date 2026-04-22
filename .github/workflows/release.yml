@@ -51,12 +51,33 @@ jobs:
           - goos: linux
             goarch: arm64
             artifact_name: uwgsocks-ui-linux-arm64
+          - goos: linux
+            goarch: riscv64
+            artifact_name: uwgsocks-ui-linux-riscv64
+          - goos: linux
+            goarch: mips
+            artifact_name: uwgsocks-ui-linux-mips
+          - goos: linux
+            goarch: mipsle
+            artifact_name: uwgsocks-ui-linux-mipsle
           - goos: darwin
             goarch: amd64
             artifact_name: uwgsocks-ui-darwin-amd64
           - goos: darwin
             goarch: arm64
             artifact_name: uwgsocks-ui-darwin-arm64
+          - goos: freebsd
+            goarch: amd64
+            artifact_name: uwgsocks-ui-freebsd-amd64
+          - goos: freebsd
+            goarch: arm64
+            artifact_name: uwgsocks-ui-freebsd-arm64
+          - goos: openbsd
+            goarch: amd64
+            artifact_name: uwgsocks-ui-openbsd-amd64
+          - goos: openbsd
+            goarch: arm64
+            artifact_name: uwgsocks-ui-openbsd-arm64
           - goos: windows
             goarch: amd64
             artifact_name: uwgsocks-ui-windows-amd64.exe

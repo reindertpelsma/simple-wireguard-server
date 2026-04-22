@@ -31,6 +31,12 @@ Build a secure WireGuard server, relay hub, or small peer-synced mesh without Do
    curl -fsSL https://raw.githubusercontent.com/reindertpelsma/simple-wireguard-server/main/install.sh | sh
    ```
    This installs `uwgsocks-ui` and, if `uwgsocks` is not already present, also installs `uwgsocks` into `/usr/local/bin`.
+   On Windows:
+   ```powershell
+   curl.exe -fsSLo install.bat https://raw.githubusercontent.com/reindertpelsma/simple-wireguard-server/main/install.bat
+   curl.exe -fsSLo install.ps1 https://raw.githubusercontent.com/reindertpelsma/simple-wireguard-server/main/install.ps1
+   install.bat
+   ```
 6. **Login:** Open `http://localhost:8080` and sign in with `admin` plus the password printed in the terminal. 
 
 ## Why use it

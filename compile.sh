@@ -1,9 +1,9 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 export GOTOOLCHAIN="${GOTOOLCHAIN:-auto}"
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 cd "${ROOT_DIR}"
 
 if ! command -v go >/dev/null 2>&1; then
@@ -54,9 +54,16 @@ fi
 echo "Building frontend..."
 
 if ! command -v npm >/dev/null 2>&1; then
+  latest_dir() {
+    if [ -d "$1" ]; then
+      find "$1" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -1
+    fi
+  }
+  nvm_latest="$(latest_dir "${HOME}/.nvm/versions/node")"
+  fnm_latest="$(latest_dir "${HOME}/.fnm/node-versions")"
   for candidate in \
-    "${HOME}/.nvm/versions/node/$(ls "${HOME}/.nvm/versions/node/" 2>/dev/null | sort -V | tail -1)/bin" \
-    "${HOME}/.fnm/node-versions/$(ls "${HOME}/.fnm/node-versions/" 2>/dev/null | sort -V | tail -1)/installation/bin" \
+    "${nvm_latest:+$nvm_latest/bin}" \
+    "${fnm_latest:+$fnm_latest/installation/bin}" \
     "${HOME}/.volta/bin" \
     "/opt/homebrew/bin" \
     "/usr/local/bin" \
@@ -85,7 +92,7 @@ build_syswg() {
     (cd syswg && go build -ldflags="-s -w" -o ../uwgkm main.go || echo "Building syswg failed, will continue without syswg" )
 }
 
-if [ "$OS" == "linux" ]; then
+if [ "$OS" = "linux" ]; then
     build_syswg
 fi
 

@@ -37,7 +37,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/glebarez/sqlite"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/bcrypt"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
@@ -687,6 +686,7 @@ func main() {
 // --- Database Init & Auth ---
 func initDB() {
 	var dialer gorm.Dialector
+	var err error
 	switch *dbType {
 	case "mysql":
 		dialer = mysql.Open(*dbDSN)
@@ -697,10 +697,12 @@ func initDB() {
 		if *dbDSN == "wgui.db" {
 			dbPath = resolvePath("wgui.db")
 		}
-		dialer = sqlite.Open(dbPath)
+		dialer, err = sqliteDialector(dbPath)
+		if err != nil {
+			log.Fatalf("Failed to initialize sqlite driver: %v", err)
+		}
 	}
 
-	var err error
 	gdb, err = gorm.Open(dialer, &gorm.Config{})
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)

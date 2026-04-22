@@ -24,7 +24,7 @@ os="${TARGET_OS:-$os}"
 arch="${TARGET_ARCH:-$arch}"
 
 case "$os" in
-  linux|darwin|freebsd) ;;
+  linux|darwin|freebsd|openbsd) ;;
   *)
     echo "unsupported OS: $os" >&2
     exit 1
@@ -34,6 +34,9 @@ esac
 case "$arch" in
   x86_64|amd64) arch=amd64 ;;
   aarch64|arm64) arch=arm64 ;;
+  riscv64) arch=riscv64 ;;
+  mips) arch=mips ;;
+  mipsel|mipsle) arch=mipsle ;;
   *)
     echo "unsupported architecture: $arch" >&2
     exit 1
