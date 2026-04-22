@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { ArrowLeftRight, LogOut, Menu, Plus, Radio, RadioTower, Settings, ShieldAlert, Smartphone, User, Users, X } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Lock, LogOut, Menu, Plus, RadioTower, Settings, ShieldAlert, Smartphone, User, Users, X } from 'lucide-react';
 import { api } from '../lib/api';
 import AddPeerModal from './AddPeerModal';
 import ConfigModal from './ConfigModal';
@@ -7,55 +7,82 @@ import PeersTab from './PeersTab';
 import UsersTab from './UsersTab';
 import ACLsTab from './ACLsTab';
 import SettingsTab from './SettingsTab';
-import TransportsTab from './TransportsTab';
 import TurnTab from './TurnTab';
-import ForwardsTab from './ForwardsTab';
 import ProfileTab from './ProfileTab';
 import ThemeToggle from './ThemeToggle';
+import ServicesTab from './ServicesTab';
+import SudoModal from './SudoModal';
 
 const tabs = [
   { id: 'peers',      label: 'Peers',      icon: Smartphone,    adminOnly: false },
+  { id: 'services',   label: 'Services',   icon: RadioTower,    adminOnly: false },
   { id: 'profile',    label: 'Profile',    icon: User,          adminOnly: false },
   { id: 'acls',       label: 'ACLs',       icon: ShieldAlert,   adminOnly: true },
-  { id: 'transports', label: 'Transports', icon: Radio,         adminOnly: true },
   { id: 'turn',       label: 'TURN',       icon: RadioTower,    adminOnly: true },
-  { id: 'forwards',   label: 'Forwards',   icon: ArrowLeftRight, adminOnly: true },
-  { id: 'users',      label: 'Users',      icon: Users,         adminOnly: true },
+  { id: 'users',      label: 'Users',      icon: Users,         adminOnly: false },
   { id: 'settings',   label: 'Settings',   icon: Settings,      adminOnly: true },
 ];
 
 export default function Dashboard({ theme, onToggleTheme, onLogout }) {
   const [activeTab, setActiveTab] = useState('peers');
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [me, setMe] = useState(null);
+  const [publicConfig, setPublicConfig] = useState({});
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedPeer, setSelectedPeer] = useState(null);
   const [currentUsername, setCurrentUsername] = useState('');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [sudoModalOpen, setSudoModalOpen] = useState(false);
 
-  useEffect(() => {
-    async function checkAdmin() {
-      try {
-        await api.getUsers();
-        setIsAdmin(true);
-      } catch {
-        setIsAdmin(false);
-      }
+  const refreshContext = useCallback(async () => {
+    try {
+      const [meData, cfg] = await Promise.all([api.getMe(), api.getPublicConfig()]);
+      setMe(meData || null);
+      setPublicConfig(cfg || {});
+      setCurrentUsername(meData?.username || '');
+    } catch {
+      setMe(null);
+      setPublicConfig({});
+      setCurrentUsername('');
     }
-
-    async function fetchMe() {
-      try {
-        const me = await api.getMe();
-        setCurrentUsername(me?.username || '');
-      } catch {
-        // ignore
-      }
-    }
-
-    checkAdmin();
-    fetchMe();
   }, []);
 
-  const visibleTabs = tabs.filter((tab) => isAdmin || !tab.adminOnly);
+  useEffect(() => {
+    let cancelled = false;
+    async function loadContext() {
+      try {
+        const [meData, cfg] = await Promise.all([api.getMe(), api.getPublicConfig()]);
+        if (cancelled) {
+          return;
+        }
+        setMe(meData || null);
+        setPublicConfig(cfg || {});
+        setCurrentUsername(meData?.username || '');
+      } catch {
+        if (cancelled) {
+          return;
+        }
+        setMe(null);
+        setPublicConfig({});
+        setCurrentUsername('');
+      }
+    }
+    loadContext();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const isAdmin = !!me?.can_manage_settings;
+  const canManageUsers = !!me?.can_manage_users;
+  const sudoActive = !!me?.sudo_active;
+  const turnAvailable = isAdmin || Number(publicConfig.turn_listener_count || 0) > 0;
+
+  const visibleTabs = tabs.filter((tab) => {
+    if (tab.id === 'users') return canManageUsers;
+    if (tab.id === 'acls' || tab.id === 'settings') return isAdmin;
+    if (tab.id === 'turn') return turnAvailable;
+    return !tab.adminOnly || isAdmin;
+  });
   const activeTabMeta = visibleTabs.find((tab) => tab.id === activeTab) || visibleTabs[0];
 
   const handleLogout = async () => {
@@ -73,16 +100,24 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="space-y-2">
-              <span className="eyebrow">WireGuard VPN Control</span>
+              <span className="eyebrow">Simple WireGuard Server</span>
               <div className="flex flex-wrap items-center gap-3">
                 <h1 className="text-2xl font-black tracking-tight sm:text-3xl">
-                  Manage peers, policies, and bootstrap access from one console
+                  Manage WireGuard peers, services, and operator access
                 </h1>
               </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
               <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+              <button
+                type="button"
+                onClick={() => setSudoModalOpen(true)}
+                className={`ghost-button ${sudoActive ? '' : 'ghost-button-danger'}`}
+              >
+                <Lock size={16} />
+                <span>{sudoActive ? 'Changes unlocked' : 'Read-only mode'}</span>
+              </button>
               <button
                 type="button"
                 onClick={() => setMobileNavOpen((open) => !open)}
@@ -94,7 +129,7 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
               </button>
               <button
                 type="button"
-                onClick={() => setIsAddModalOpen(true)}
+                onClick={() => sudoActive ? setIsAddModalOpen(true) : setSudoModalOpen(true)}
                 className="primary-button"
               >
                 <Plus size={18} />
@@ -161,14 +196,13 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
       </header>
 
       <main className="mx-auto w-full max-w-7xl px-4 py-6 pb-24 sm:px-6 lg:px-8">
-        {activeTab === 'peers'      && <PeersTab isAdmin={isAdmin} currentUsername={currentUsername} onSelectPeer={setSelectedPeer} />}
-        {activeTab === 'profile'    && <ProfileTab />}
+        {activeTab === 'peers'      && <PeersTab isAdmin={isAdmin} currentUsername={currentUsername} sudoActive={sudoActive} onRequireSudo={() => setSudoModalOpen(true)} onSelectPeer={(peer) => sudoActive ? setSelectedPeer(peer) : setSudoModalOpen(true)} />}
+        {activeTab === 'services'   && <ServicesTab isAdmin={isAdmin} />}
+        {activeTab === 'profile'    && <ProfileTab me={me} sudoActive={sudoActive} onRequireSudo={() => setSudoModalOpen(true)} onRefreshMe={refreshContext} />}
         {activeTab === 'acls'       && <ACLsTab />}
-        {activeTab === 'transports' && <TransportsTab />}
-        {activeTab === 'turn'       && <TurnTab />}
-        {activeTab === 'forwards'   && <ForwardsTab />}
-        {activeTab === 'users'      && <UsersTab />}
-        {activeTab === 'settings'   && <SettingsTab />}
+        {activeTab === 'turn'       && <TurnTab isAdmin={isAdmin} sudoActive={sudoActive} onRequireSudo={() => setSudoModalOpen(true)} />}
+        {activeTab === 'users'      && <UsersTab me={me} />}
+        {activeTab === 'settings'   && <SettingsTab sudoActive={sudoActive} onRequireSudo={() => setSudoModalOpen(true)} />}
       </main>
 
       <footer className="px-4 pb-10 text-center text-sm text-[var(--muted)] sm:px-6 lg:px-8">
@@ -177,7 +211,7 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
 
       <button
         type="button"
-        onClick={() => setIsAddModalOpen(true)}
+        onClick={() => sudoActive ? setIsAddModalOpen(true) : setSudoModalOpen(true)}
         className="floating-action lg:hidden"
         aria-label="Create device"
       >
@@ -200,6 +234,13 @@ export default function Dashboard({ theme, onToggleTheme, onLogout }) {
           onClose={() => setSelectedPeer(null)}
         />
       )}
+
+      <SudoModal
+        open={sudoModalOpen}
+        onClose={() => setSudoModalOpen(false)}
+        onSuccess={refreshContext}
+        requires2FA={!!me?.totp_enabled}
+      />
     </div>
   );
 }

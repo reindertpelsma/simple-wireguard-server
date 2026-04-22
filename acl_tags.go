@@ -101,6 +101,29 @@ func userIsAdmin(user User) bool {
 	return user.IsAdmin || containsToken(userGroups(user), "admin")
 }
 
+func hasModeratorGroup(groups string) bool {
+	return containsToken(splitCSVList(groups), "moderator")
+}
+
+func userIsModeratorOnly(user User) bool {
+	return !userIsAdmin(user) && containsToken(userGroups(user), "moderator")
+}
+
+func userCanManageUsers(user User) bool {
+	return userIsAdmin(user) || userIsModeratorOnly(user)
+}
+
+func userRole(user User) string {
+	switch {
+	case userIsAdmin(user):
+		return "admin"
+	case userIsModeratorOnly(user):
+		return "moderator"
+	default:
+		return "user"
+	}
+}
+
 func primaryGroupExists(name string) (Group, bool) {
 	name = normalizeGroupName(name)
 	if name == "" {

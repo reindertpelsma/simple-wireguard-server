@@ -26,6 +26,12 @@ function parseTransportProfiles(globalConfig) {
   return profiles;
 }
 
+function shortDownloadLabel(name) {
+  const trimmed = String(name || 'configuration').trim() || 'configuration';
+  const shortened = trimmed.length > 28 ? `${trimmed.slice(0, 25)}…` : trimmed;
+  return `Download ${shortened}`;
+}
+
 export default function ConfigModal({ peer, onClose }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -273,7 +279,7 @@ export default function ConfigModal({ peer, onClose }) {
                     </button>
                     <button type="button" onClick={() => downloadConfigFile(peer.name, displayedConfig)} className="primary-button">
                       <Download size={16} />
-                      <span>Download `.conf`</span>
+                      <span>{shortDownloadLabel(peer.name)}</span>
                     </button>
                   </div>
 

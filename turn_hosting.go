@@ -38,6 +38,7 @@ type TURNCredential struct {
 	ID                 uint                `gorm:"primaryKey" json:"id"`
 	UserID             uint                `gorm:"index;not null" json:"user_id"`
 	User               User                `gorm:"foreignKey:UserID" json:"-"`
+	OwnerUsername      string              `gorm:"-" json:"owner_username,omitempty"`
 	Name               string              `json:"name"`
 	Username           string              `gorm:"uniqueIndex;not null" json:"username"`
 	PasswordEncrypted  string              `json:"-"`
@@ -57,15 +58,17 @@ type TURNClientProfile struct {
 }
 
 func registerTURNRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/turn/listeners", authMiddleware(handleListTURNListeners))
 	mux.HandleFunc("GET /api/admin/turn/listeners", authMiddleware(adminMiddleware(handleListTURNListeners)))
-	mux.HandleFunc("POST /api/admin/turn/listeners", authMiddleware(adminMiddleware(handleCreateTURNListener)))
-	mux.HandleFunc("PATCH /api/admin/turn/listeners/{id}", authMiddleware(adminMiddleware(handleUpdateTURNListener)))
-	mux.HandleFunc("DELETE /api/admin/turn/listeners/{id}", authMiddleware(adminMiddleware(handleDeleteTURNListener)))
+	mux.HandleFunc("POST /api/admin/turn/listeners", authMiddleware(sudoMiddleware(adminMiddleware(handleCreateTURNListener))))
+	mux.HandleFunc("PATCH /api/admin/turn/listeners/{id}", authMiddleware(sudoMiddleware(adminMiddleware(handleUpdateTURNListener))))
+	mux.HandleFunc("DELETE /api/admin/turn/listeners/{id}", authMiddleware(sudoMiddleware(adminMiddleware(handleDeleteTURNListener))))
+	mux.HandleFunc("GET /api/admin/turn/credentials", authMiddleware(adminMiddleware(handleListAllTURNCredentials)))
 	mux.HandleFunc("GET /api/admin/turn/status", authMiddleware(adminMiddleware(handleGetTURNStatus)))
 
 	mux.HandleFunc("GET /api/me/turn-credentials", authMiddleware(handleGetMyTURNCredentials))
-	mux.HandleFunc("POST /api/me/turn-credentials", authMiddleware(handleCreateMyTURNCredential))
-	mux.HandleFunc("DELETE /api/me/turn-credentials/{id}", authMiddleware(handleDeleteMyTURNCredential))
+	mux.HandleFunc("POST /api/me/turn-credentials", authMiddleware(sudoMiddleware(handleCreateMyTURNCredential)))
+	mux.HandleFunc("DELETE /api/me/turn-credentials/{id}", authMiddleware(sudoMiddleware(handleDeleteMyTURNCredential)))
 }
 
 func listEnabledTURNListeners() []TURNHostedListener {
@@ -201,6 +204,23 @@ func handleGetMyTURNCredentials(w http.ResponseWriter, r *http.Request) {
 		password := decryptAtRest(creds[i].PasswordEncrypted)
 		creds[i].Connected = active[creds[i].Username]
 		creds[i].Profiles = buildTURNCredentialProfiles(creds[i], password)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if creds == nil {
+		creds = []TURNCredential{}
+	}
+	json.NewEncoder(w).Encode(creds)
+}
+
+func handleListAllTURNCredentials(w http.ResponseWriter, r *http.Request) {
+	var creds []TURNCredential
+	gdb.Preload("User").Order("created_at desc").Find(&creds)
+	active := activeTURNUsernames()
+	for i := range creds {
+		password := decryptAtRest(creds[i].PasswordEncrypted)
+		creds[i].Connected = active[creds[i].Username]
+		creds[i].Profiles = buildTURNCredentialProfiles(creds[i], password)
+		creds[i].OwnerUsername = creds[i].User.Username
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if creds == nil {

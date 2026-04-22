@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Eye, EyeOff, KeyRound, RadioTower, ShieldCheck, User } from 'lucide-react';
 import { api } from '../lib/api';
 
-export default function ProfileTab() {
-  const [me, setMe] = useState(null);
+export default function ProfileTab({ me: meProp, sudoActive = false, onRequireSudo = () => {}, onRefreshMe = () => {} }) {
+  const [me, setMe] = useState(meProp);
   const [creds, setCreds] = useState([]);
   const [createdCred, setCreatedCred] = useState(null);
   const [turnCreds, setTurnCreds] = useState([]);
@@ -19,12 +19,11 @@ export default function ProfileTab() {
   const [pwError, setPwError] = useState('');
   const [showPw, setShowPw] = useState(false);
 
-  useEffect(() => { fetchData(); }, []);
-
-  async function fetchData() {
+  const fetchData = useCallback(async () => {
     try {
       const [meData, credData, cfg] = await Promise.all([api.getMe(), api.getMyProxyCredentials(), api.getPublicConfig()]);
       setMe(meData);
+      onRefreshMe();
       setCreds(credData);
       setPublicConfig(cfg || {});
       if ((cfg || {}).turn_hosting_enabled === 'true') {
@@ -39,7 +38,12 @@ export default function ProfileTab() {
     } catch (err) {
       console.error(err);
     }
-  }
+  }, [onRefreshMe]);
+
+  useEffect(() => { setMe(meProp); }, [meProp]);
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const handleChangePassword = async (e) => {
     e.preventDefault();
@@ -65,6 +69,7 @@ export default function ProfileTab() {
   };
 
   const handleSetup2FA = async () => {
+    if (!sudoActive) return onRequireSudo();
     setBusy('2fa');
     try {
       const res = await api.setupTOTP();
@@ -79,6 +84,7 @@ export default function ProfileTab() {
   };
 
   const handleEnable2FA = async () => {
+    if (!sudoActive) return onRequireSudo();
     setBusy('2fa');
     try {
       await api.enableTOTP(totpCode);
@@ -94,6 +100,7 @@ export default function ProfileTab() {
   };
 
   const handleDisable2FA = async () => {
+    if (!sudoActive) return onRequireSudo();
     if (!confirm('Disable two-factor authentication for your account?')) return;
     setBusy('2fa');
     try {
@@ -108,6 +115,7 @@ export default function ProfileTab() {
   };
 
   const handleCreateCred = async () => {
+    if (!sudoActive) return onRequireSudo();
     setBusy('cred');
     try {
       const res = await api.createMyProxyCredential({ name: 'Proxy access' });
@@ -121,6 +129,7 @@ export default function ProfileTab() {
   };
 
   const handleDeleteCred = async (id) => {
+    if (!sudoActive) return onRequireSudo();
     if (!confirm('Delete this proxy credential?')) return;
     try {
       await api.deleteMyProxyCredential(id);
@@ -131,6 +140,7 @@ export default function ProfileTab() {
   };
 
   const handleCreateTurnCred = async () => {
+    if (!sudoActive) return onRequireSudo();
     setBusy('turn');
     try {
       const res = await api.createMyTURNCredential(turnForm);
@@ -144,6 +154,7 @@ export default function ProfileTab() {
   };
 
   const handleDeleteTurnCred = async (id) => {
+    if (!sudoActive) return onRequireSudo();
     if (!confirm('Delete this TURN credential?')) return;
     try {
       await api.deleteMyTURNCredential(id);
@@ -161,6 +172,11 @@ export default function ProfileTab() {
 
   return (
     <div className="grid gap-6 xl:grid-cols-2">
+      {!sudoActive && (
+        <section className="panel p-6 col-span-full">
+          <div className="error-banner">Sensitive actions are locked. Use “Unlock changes” in the header before changing security settings or creating credentials.</div>
+        </section>
+      )}
 
       {/* Identity */}
       <section className="panel p-6 col-span-full">

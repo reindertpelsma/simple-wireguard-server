@@ -37,7 +37,7 @@ const EMPTY_FORM = {
 };
 
 const INPUT =
-  'w-full rounded border border-gray-300 bg-white px-2 py-1 text-gray-900 placeholder-gray-400 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500';
+  'w-full rounded border border-[var(--border)] bg-[var(--input)] px-2 py-1 text-[var(--text)] placeholder:text-[var(--muted)]';
 const SELECT = INPUT;
 const LABEL = 'flex flex-col gap-1 text-sm text-gray-700 dark:text-gray-300';
 
@@ -175,14 +175,14 @@ export default function TransportsTab() {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200">
+      <div className="rounded-3xl border border-[var(--border)] bg-[var(--surface-soft)] px-4 py-3 text-sm text-[var(--text)]">
         Transport add/remove/update is applied live without a daemon restart. However, <strong>listener port changes</strong> (enabling or changing a listen port) only take effect after restarting the daemon from the Settings tab.
       </div>
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Radio className="h-5 w-5 text-blue-500" />
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Transports</h2>
+          <Radio className="h-5 w-5 text-[var(--accent)]" />
+          <h2 className="text-lg font-semibold text-[var(--text)]">Transports</h2>
         </div>
         <button
           onClick={() => { setForm(EMPTY_FORM); setEditId(null); setShowForm((s) => !s); setError(''); }}
@@ -197,9 +197,9 @@ export default function TransportsTab() {
       {showForm && (
         <form
           onSubmit={handleSubmit}
-          className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800 space-y-4"
+          className="rounded-3xl border border-[var(--border)] bg-[var(--panel-strong)] p-5 shadow-sm space-y-4"
         >
-          <h3 className="font-semibold text-gray-800 dark:text-gray-100">
+          <h3 className="font-semibold text-[var(--text)]">
             {editId != null ? 'Edit Transport' : 'New Transport'}
           </h3>
 

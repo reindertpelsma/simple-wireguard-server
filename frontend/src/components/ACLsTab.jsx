@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { GripVertical, Plus, ShieldAlert, Trash2, X } from 'lucide-react';
+import { GripVertical, Plus, Search, ShieldAlert, Trash2, X } from 'lucide-react';
 import { api } from '../lib/api';
 
 const PROTO_OPTIONS = ['any', 'tcp', 'udp', 'icmp'];
@@ -196,6 +196,9 @@ function RuleRow({ rule, onDelete, onEdit, dragHandleProps }) {
         <span className={`self-start rounded-full px-2 py-0.5 text-xs font-bold uppercase ${rule.action === 'deny' ? 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300'}`}>
           {rule.action}
         </span>
+        {rule.name ? (
+          <span className="self-start rounded-full bg-[var(--surface-soft)] px-2 py-0.5 text-xs font-semibold text-[var(--text)]">{rule.name}</span>
+        ) : null}
 
         <div className="flex flex-wrap gap-1 text-xs">
           {srcTokens.length === 0
@@ -237,7 +240,7 @@ function RuleRow({ rule, onDelete, onEdit, dragHandleProps }) {
   );
 }
 
-const EMPTY_RULE = { action: 'allow', src: '', src_users: '', src_tags: '', src_peers: '', dst: '', dst_users: '', dst_tags: '', dst_peers: '', proto: 'any', dport: '' };
+const EMPTY_RULE = { name: '', action: 'allow', src: '', src_users: '', src_tags: '', src_peers: '', dst: '', dst_users: '', dst_tags: '', dst_peers: '', proto: 'any', dport: '' };
 
 function RuleForm({ initial, onSave, onCancel, listName }) {
   const [srcTokens, setSrcTokens] = useState(() => initial ? ruleToTokens(initial, 'src') : []);
@@ -254,6 +257,10 @@ function RuleForm({ initial, onSave, onCancel, listName }) {
   return (
     <form onSubmit={handleSubmit} className="space-y-4 rounded-2xl border border-[var(--border)] bg-[var(--surface-soft)] p-4">
       <div className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-1.5 md:col-span-2">
+          <label className="field-label">Name</label>
+          <input className="input-field" placeholder="Allow web to app subnet" value={form.name || ''} onChange={e => setForm({ ...form, name: e.target.value })} />
+        </div>
         <div className="space-y-1.5">
           <label className="field-label">Action</label>
           <select className="select-field" value={form.action} onChange={e => setForm({ ...form, action: e.target.value })}>
@@ -296,6 +303,7 @@ function RuleForm({ initial, onSave, onCancel, listName }) {
 
 export default function ACLsTab() {
   const [acls, setACLs] = useState([]);
+  const [search, setSearch] = useState('');
   const [defaults, setDefaults] = useState({ inbound: 'allow', outbound: 'allow', relay: 'deny' });
   const [activeList, setActiveList] = useState('relay');
   const [showForm, setShowForm] = useState(false);
@@ -337,9 +345,25 @@ export default function ACLsTab() {
   }, []);
 
   const listRules = acls.filter(a => a.list_name === activeList);
+  const filteredRules = listRules.filter((rule) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return [
+      rule.name,
+      rule.src,
+      rule.src_users,
+      rule.src_tags,
+      rule.src_peers,
+      rule.dst,
+      rule.dst_users,
+      rule.dst_tags,
+      rule.dst_peers,
+      rule.dport,
+    ].filter(Boolean).join(' ').toLowerCase().includes(q);
+  });
   const displayRules = orderedIds
-    ? orderedIds.map(id => listRules.find(r => r.id === id)).filter(Boolean)
-    : listRules;
+    ? orderedIds.map(id => filteredRules.find(r => r.id === id)).filter(Boolean)
+    : filteredRules;
 
   const saveDefaults = async () => {
     try {
@@ -427,35 +451,6 @@ export default function ACLsTab() {
         ACL changes take effect immediately — rules are pushed live to the daemon without a restart.
       </div>
 
-      {/* Defaults */}
-      <section className="panel p-6">
-        <div className="mb-4 flex items-center gap-3">
-          <div className="brand-badge"><ShieldAlert size={18} /></div>
-          <div>
-            <span className="eyebrow">ACL Defaults</span>
-            <h3 className="text-2xl font-black tracking-tight">Default actions</h3>
-          </div>
-        </div>
-        <div className="grid gap-4 md:grid-cols-3">
-          {LISTS.map(({ id, label, desc }) => (
-            <div key={id} className="space-y-1.5">
-              <label className="field-label">{label} <span className="normal-case font-normal text-[var(--muted)]">— {desc}</span></label>
-              <select
-                className="select-field"
-                value={defaults[id]}
-                onChange={e => setDefaults(d => ({ ...d, [id]: e.target.value }))}
-              >
-                <option value="allow">Allow</option>
-                <option value="deny">Deny</option>
-              </select>
-            </div>
-          ))}
-        </div>
-        <div className="mt-4">
-          <button type="button" onClick={saveDefaults} className="primary-button"><span>Save defaults</span></button>
-        </div>
-      </section>
-
       {/* Tab strip */}
       <div className="flex gap-2">
         {LISTS.map(({ id, label }) => (
@@ -475,6 +470,16 @@ export default function ACLsTab() {
 
       {/* Rules list */}
       <section className="space-y-2">
+        <label className="peer-search mb-2">
+          <Search size={16} />
+          <input
+            type="search"
+            className="input-field"
+            placeholder="Filter by name, source, or destination"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </label>
         {displayRules.length === 0 && !showForm && (
           <div className="state-shell py-10 text-[var(--muted)]">No {activeList} rules — default is <strong>{defaults[activeList]}</strong></div>
         )}
@@ -517,6 +522,35 @@ export default function ACLsTab() {
             onCancel={() => setShowForm(false)}
           />
         )}
+      </section>
+
+      {/* Defaults */}
+      <section className="panel p-6">
+        <div className="mb-4 flex items-center gap-3">
+          <div className="brand-badge"><ShieldAlert size={18} /></div>
+          <div>
+            <span className="eyebrow">ACL Defaults</span>
+            <h3 className="text-2xl font-black tracking-tight">Default actions</h3>
+          </div>
+        </div>
+        <div className="grid gap-4 md:grid-cols-3">
+          {LISTS.map(({ id, label, desc }) => (
+            <div key={id} className="space-y-1.5">
+              <label className="field-label">{label} <span className="normal-case font-normal text-[var(--muted)]">— {desc}</span></label>
+              <select
+                className="select-field"
+                value={defaults[id]}
+                onChange={e => setDefaults(d => ({ ...d, [id]: e.target.value }))}
+              >
+                <option value="allow">Allow</option>
+                <option value="deny">Deny</option>
+              </select>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4">
+          <button type="button" onClick={saveDefaults} className="primary-button"><span>Save defaults</span></button>
+        </div>
       </section>
 
       {/* Actions */}

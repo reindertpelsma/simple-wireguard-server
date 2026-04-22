@@ -1,8 +1,50 @@
 import { useEffect, useState } from 'react';
 import { FileText, Network, Power, Save } from 'lucide-react';
 import { api } from '../lib/api';
+import TransportsTab from './TransportsTab';
+import ForwardsTab from './ForwardsTab';
 
-export default function SettingsTab() {
+const FIELD_LABELS = {
+  server_pubkey: 'Server public key',
+  server_endpoint: 'Server endpoint',
+  default_transport: 'Preferred client transport',
+  client_subnet_ipv4: 'Client subnet IPv4',
+  client_subnet_ipv6: 'Client subnet IPv6',
+  group_base_subnet: 'Group subnet pool IPv4',
+  group_base_subnet_ipv6: 'Group subnet pool IPv6',
+  group_subnet_bits: 'Group subnet prefix bits',
+  group_subnet_ipv6_bits: 'Group subnet IPv6 prefix bits',
+  yaml_socks5_port: 'YAML local proxy SOCKS5 port',
+  yaml_http_port: 'YAML local proxy HTTP port',
+  auth_sudo_timeout_seconds: 'Unlock timeout (seconds)',
+  auth_session_timeout_seconds: 'Full session timeout (seconds)',
+  peers_visible_to_all: 'Show peers to other users',
+};
+
+const FIELD_HELP = {
+  server_pubkey: 'Derived from the server private key and exposed read-only to help with manual client bootstrap.',
+  auth_sudo_timeout_seconds: 'How long elevated actions stay unlocked after password re-authentication.',
+  auth_session_timeout_seconds: 'How long a login stays valid before the user is fully logged out.',
+  peers_visible_to_all: 'When disabled, users only see their own peers unless they are administrators.',
+  client_subnet_ipv4: 'Fallback IPv4 pool for peers that are not assigned from a group-specific subnet.',
+  client_subnet_ipv6: 'Fallback IPv6 pool for peers that are not assigned from a group-specific subnet.',
+};
+
+function fieldLabel(key) {
+  return FIELD_LABELS[key] || key.replace(/_/g, ' ');
+}
+
+function isBooleanLike(value) {
+  return value === 'true' || value === 'false';
+}
+
+function inputTypeFor(key, value) {
+  if (isBooleanLike(value)) return 'boolean';
+  if (key.endsWith('_seconds') || key.endsWith('_port') || key.endsWith('_bits') || key.includes('_max_')) return 'number';
+  return 'text';
+}
+
+export default function SettingsTab({ sudoActive = false, onRequireSudo = () => {} }) {
   const [config, setConfig] = useState({});
   const [yamlInfo, setYamlInfo] = useState({ enabled: false, custom: '', effective: '', generated: '' });
   const [customYaml, setCustomYaml] = useState('');
@@ -46,6 +88,7 @@ export default function SettingsTab() {
 
   const handleUpdate = async (event) => {
     event.preventDefault();
+    if (!sudoActive) return onRequireSudo();
     try {
       await api.updateGlobalConfig(config);
       alert('Config updated. Some daemon changes may still need a restart.');
@@ -56,6 +99,7 @@ export default function SettingsTab() {
   };
 
   const handleSaveYaml = async () => {
+    if (!sudoActive) return onRequireSudo();
     setBusy('yaml');
     try {
       await api.saveYAMLConfig({ enabled: customEnabled, custom: customYaml });
@@ -69,6 +113,7 @@ export default function SettingsTab() {
   };
 
   const handleRestart = async () => {
+    if (!sudoActive) return onRequireSudo();
     if (!confirm('Restart the managed uwgsocks/uwgkm daemon now? Existing daemon-side sessions may reconnect.')) return;
     setBusy('restart');
     try {
@@ -83,6 +128,7 @@ export default function SettingsTab() {
 
   const handleCreateService = async (event) => {
     event.preventDefault();
+    if (!sudoActive) return onRequireSudo();
     setBusy('service');
     try {
       await api.createExposedService(serviceForm);
@@ -96,6 +142,7 @@ export default function SettingsTab() {
   };
 
   const handleDeleteService = async (id) => {
+    if (!sudoActive) return onRequireSudo();
     if (!confirm('Delete this exposed service?')) return;
     setBusy('service');
     try {
@@ -131,16 +178,34 @@ export default function SettingsTab() {
           </div>
         </div>
 
+        {!sudoActive && (
+          <div className="mb-4 error-banner">Settings are currently read-only. Use “Unlock changes” in the header before editing configuration.</div>
+        )}
+
         <form onSubmit={handleUpdate} className="grid gap-4 md:grid-cols-2">
           {editableConfigEntries.map(([key, value]) => (
             <div key={key} className="space-y-2">
-              <label className="field-label">{key.replace(/_/g, ' ')}</label>
-              <input
-                type="text"
-                className="input-field"
-                value={value}
-                onChange={(event) => setConfig({ ...config, [key]: event.target.value })}
-              />
+              <label className="field-label" title={FIELD_HELP[key] || ''}>{fieldLabel(key)}</label>
+              {inputTypeFor(key, value) === 'boolean' ? (
+                <select
+                  className="input-field"
+                  value={value}
+                  disabled={key === 'server_pubkey'}
+                  onChange={(event) => setConfig({ ...config, [key]: event.target.value })}
+                >
+                  <option value="true">Enabled</option>
+                  <option value="false">Disabled</option>
+                </select>
+              ) : (
+                <input
+                  type={inputTypeFor(key, value)}
+                  className="input-field"
+                  value={value}
+                  readOnly={key === 'server_pubkey'}
+                  onChange={(event) => setConfig({ ...config, [key]: event.target.value })}
+                />
+              )}
+              {FIELD_HELP[key] ? <p className="text-xs text-[var(--muted)]">{FIELD_HELP[key]}</p> : null}
             </div>
           ))}
 
@@ -452,6 +517,32 @@ export default function SettingsTab() {
         </div>
       </section>
       </div>
+
+      <section className="panel p-6 col-span-full">
+        <div className="mb-6 flex items-center gap-3">
+          <div className="brand-badge">
+            <Network size={18} />
+          </div>
+          <div>
+            <span className="eyebrow">Daemon listeners</span>
+            <h3 className="text-2xl font-black tracking-tight">Transports</h3>
+          </div>
+        </div>
+        <TransportsTab />
+      </section>
+
+      <section className="panel p-6 col-span-full">
+        <div className="mb-6 flex items-center gap-3">
+          <div className="brand-badge">
+            <Network size={18} />
+          </div>
+          <div>
+            <span className="eyebrow">Host and tunnel forwarding</span>
+            <h3 className="text-2xl font-black tracking-tight">Forwards</h3>
+          </div>
+        </div>
+        <ForwardsTab />
+      </section>
     </div>
   );
 }

@@ -235,6 +235,8 @@ func userForOIDC(info oidcUserinfo) (User, error) {
 		if g == "admin" || g == "administrators" {
 			isAdmin = true
 			additionalGroups = append(additionalGroups, "admin")
+		} else if g == "moderator" || g == "moderators" {
+			additionalGroups = append(additionalGroups, "moderator")
 		} else {
 			// Validate that the group exists in the DB before assigning.
 			var dbGroup Group

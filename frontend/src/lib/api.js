@@ -26,6 +26,20 @@ export async function request(path, options = {}) {
     throw new Error('Unauthorized');
   }
 
+  if (response.status === 428) {
+    const text = await response.text();
+    let message = 'Re-authentication required';
+    try {
+      const parsed = text ? JSON.parse(text) : {};
+      message = parsed.error || message;
+    } catch {
+      message = text || message;
+    }
+    const authError = new Error(message);
+    authError.code = 'sudo_required';
+    throw authError;
+  }
+
   if (!response.ok) {
     const error = await response.text();
     throw new Error(error || response.statusText);
@@ -43,6 +57,12 @@ export const api = {
     request('/api/login', {
       method: 'POST',
       body: JSON.stringify({ username, password, totp_code: totpCode }),
+    }),
+
+  reauth: (password, totpCode = '') =>
+    request('/api/auth/reauth', {
+      method: 'POST',
+      body: JSON.stringify({ password, totp_code: totpCode }),
     }),
 
   logout: () =>
@@ -213,6 +233,7 @@ export const api = {
     }),
 
   getExposedServices: () => request('/api/admin/exposed-services'),
+  getVisibleServices: () => request('/api/services'),
   createExposedService: (data) =>
     request('/api/admin/exposed-services', {
       method: 'POST',
@@ -228,6 +249,7 @@ export const api = {
       method: 'DELETE',
     }),
 
+  getVisibleTURNListeners: () => request('/api/turn/listeners'),
   getTURNListeners: () => request('/api/admin/turn/listeners'),
   createTURNListener: (data) =>
     request('/api/admin/turn/listeners', {
@@ -243,6 +265,7 @@ export const api = {
     request(`/api/admin/turn/listeners/${id}`, {
       method: 'DELETE',
     }),
+  getAdminTURNCredentials: () => request('/api/admin/turn/credentials'),
   getTURNStatus: () => request('/api/admin/turn/status'),
 
   updateMe: (data) =>

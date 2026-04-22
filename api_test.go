@@ -47,11 +47,22 @@ func createTestUser(t *testing.T, username string, isAdmin bool) (User, string) 
 	return user, user.Token
 }
 
+func setTestSessionTimes(t *testing.T, userID uint, tokenIssuedAt, sudoAuthAt time.Time) {
+	t.Helper()
+	if err := gdb.Model(&User{}).Where("id = ?", userID).Updates(map[string]interface{}{
+		"token_issued_at": tokenIssuedAt,
+		"sudo_auth_at":    sudoAuthAt,
+	}).Error; err != nil {
+		t.Fatalf("update session times: %v", err)
+	}
+}
+
 func TestAdminGroupControlsAdminStatus(t *testing.T) {
 	setupTestDB(t)
-	createTestUser(t, "owner", false)
+	actor, _ := createTestUser(t, "owner", true)
 	body := bytes.NewBufferString(`{"username":"group-admin","password":"password","primary_group":"default","groups":"admin"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/users", body)
+	req.Header.Set("X-User-Id", fmt.Sprint(actor.ID))
 	w := httptest.NewRecorder()
 	handleCreateUser(w, req)
 	if w.Code != http.StatusCreated {
@@ -68,6 +79,7 @@ func TestAdminGroupControlsAdminStatus(t *testing.T) {
 
 	req = httptest.NewRequest(http.MethodPatch, "/api/admin/users/1", bytes.NewBufferString(`{"groups":""}`))
 	req.SetPathValue("id", fmt.Sprint(user.ID))
+	req.Header.Set("X-User-Id", fmt.Sprint(actor.ID))
 	w = httptest.NewRecorder()
 	handleUpdateUser(w, req)
 	if w.Code != http.StatusOK {
@@ -1150,5 +1162,76 @@ func TestTrafficTrackerHistory(t *testing.T) {
 	}
 	if history[1].TransmitDelta != 40 {
 		t.Fatalf("expected transmit delta 40, got %d", history[1].TransmitDelta)
+	}
+}
+
+func TestReadOnlyModeStillAllowsServicesAndPing(t *testing.T) {
+	setupTestDB(t)
+	admin, token := createTestUser(t, "admin", true)
+	now := time.Now()
+	setTestSessionTimes(t, admin.ID, now, now.Add(-2*defaultSudoTimeout))
+
+	if err := gdb.Create(&ExposedService{
+		Name:      "Wiki",
+		Host:      "wiki.example.com",
+		TargetURL: "http://100.64.0.50:80",
+		AuthMode:  "login",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	peer := Peer{
+		UserID:       admin.ID,
+		Name:         "Phone",
+		PublicKey:    "phone-pub",
+		AssignedIPs:  "100.64.0.10/32",
+		PrivateKey:   encryptAtRest("server-managed-private"),
+		PresharedKey: encryptAtRest("server-managed-psk"),
+	}
+	if err := gdb.Create(&peer).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	oldURL := *uwgsocksURL
+	defer func() { *uwgsocksURL = oldURL }()
+	pingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/ping" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"transmitted":3,"received":3,"round_trip_ms":[12.5]}`)
+	}))
+	defer pingServer.Close()
+	*uwgsocksURL = pingServer.URL
+
+	mux := http.NewServeMux()
+	registerAccessProxyRoutes(mux)
+	mux.HandleFunc("POST /api/peers/{id}/ping", authMiddleware(handlePingPeer))
+	mux.HandleFunc("GET /api/peers/{id}/private", authMiddleware(sudoMiddleware(handleGetPeerPrivate)))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/services", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("services should stay available in read-only mode, got %d: %s", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/peers/"+fmt.Sprint(peer.ID)+"/ping", nil)
+	req.SetPathValue("id", fmt.Sprint(peer.ID))
+	req.Header.Set("Authorization", "Bearer "+token)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ping should stay available in read-only mode, got %d: %s", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/peers/"+fmt.Sprint(peer.ID)+"/private", nil)
+	req.SetPathValue("id", fmt.Sprint(peer.ID))
+	req.Header.Set("Authorization", "Bearer "+token)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusPreconditionRequired {
+		t.Fatalf("sensitive config access should still require sudo, got %d: %s", w.Code, w.Body.String())
 	}
 }

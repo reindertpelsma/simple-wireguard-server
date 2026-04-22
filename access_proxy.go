@@ -91,13 +91,23 @@ func isHTTPAccessProxyRequest(r *http.Request) bool {
 
 func registerAccessProxyRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /service-auth", handleServiceAuthStart)
+	mux.HandleFunc("GET /api/services", authMiddleware(handleListVisibleServices))
 	mux.HandleFunc("GET /api/admin/proxy-credentials", authMiddleware(adminMiddleware(handleListAccessProxyCredentials)))
-	mux.HandleFunc("POST /api/admin/proxy-credentials", authMiddleware(adminMiddleware(handleCreateAccessProxyCredential)))
-	mux.HandleFunc("DELETE /api/admin/proxy-credentials/{id}", authMiddleware(adminMiddleware(handleDeleteAccessProxyCredential)))
+	mux.HandleFunc("POST /api/admin/proxy-credentials", authMiddleware(sudoMiddleware(adminMiddleware(handleCreateAccessProxyCredential))))
+	mux.HandleFunc("DELETE /api/admin/proxy-credentials/{id}", authMiddleware(sudoMiddleware(adminMiddleware(handleDeleteAccessProxyCredential))))
 	mux.HandleFunc("GET /api/admin/exposed-services", authMiddleware(adminMiddleware(handleListExposedServices)))
-	mux.HandleFunc("POST /api/admin/exposed-services", authMiddleware(adminMiddleware(handleCreateExposedService)))
-	mux.HandleFunc("PATCH /api/admin/exposed-services/{id}", authMiddleware(adminMiddleware(handleUpdateExposedService)))
-	mux.HandleFunc("DELETE /api/admin/exposed-services/{id}", authMiddleware(adminMiddleware(handleDeleteExposedService)))
+	mux.HandleFunc("POST /api/admin/exposed-services", authMiddleware(sudoMiddleware(adminMiddleware(handleCreateExposedService))))
+	mux.HandleFunc("PATCH /api/admin/exposed-services/{id}", authMiddleware(sudoMiddleware(adminMiddleware(handleUpdateExposedService))))
+	mux.HandleFunc("DELETE /api/admin/exposed-services/{id}", authMiddleware(sudoMiddleware(adminMiddleware(handleDeleteExposedService))))
+}
+
+type visibleExposedService struct {
+	ID        uint   `json:"id"`
+	Name      string `json:"name"`
+	Host      string `json:"host"`
+	AuthMode  string `json:"auth_mode"`
+	TargetURL string `json:"target_url,omitempty"`
+	URL       string `json:"url"`
 }
 
 func handleListAccessProxyCredentials(w http.ResponseWriter, r *http.Request) {
@@ -162,6 +172,56 @@ func handleListExposedServices(w http.ResponseWriter, r *http.Request) {
 	gdb.Order("host asc").Find(&services)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(services)
+}
+
+func handleListVisibleServices(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUserFromRequest(w, r)
+	if !ok {
+		return
+	}
+	var services []ExposedService
+	gdb.Order("host asc").Find(&services)
+	out := make([]visibleExposedService, 0, len(services))
+	identity := identityForUser(user)
+	for _, svc := range services {
+		if userIsAdmin(user) {
+			out = append(out, visibleExposedService{
+				ID:        svc.ID,
+				Name:      svc.Name,
+				Host:      svc.Host,
+				AuthMode:  svc.AuthMode,
+				TargetURL: svc.TargetURL,
+				URL:       serviceExternalScheme(r) + "://" + svc.Host,
+			})
+			continue
+		}
+		target, err := url.Parse(svc.TargetURL)
+		if err != nil || target.Host == "" {
+			continue
+		}
+		host := hostWithoutPort(target.Host)
+		port := 80
+		if strings.EqualFold(target.Scheme, "https") {
+			port = 443
+		}
+		if p := target.Port(); p != "" {
+			if parsed, err := strconv.Atoi(p); err == nil && parsed > 0 {
+				port = parsed
+			}
+		}
+		if !accessAllowedByACL(r, identity, host, port, "tcp") {
+			continue
+		}
+		out = append(out, visibleExposedService{
+			ID:       svc.ID,
+			Name:     svc.Name,
+			Host:     svc.Host,
+			AuthMode: svc.AuthMode,
+			URL:      serviceExternalScheme(r) + "://" + svc.Host,
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
 }
 
 func handleCreateExposedService(w http.ResponseWriter, r *http.Request) {

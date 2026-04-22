@@ -36,15 +36,23 @@ func issueUserToken(w http.ResponseWriter, user *User) string {
 	b := make([]byte, 32)
 	rand.Read(b)
 	token := base64.URLEncoding.EncodeToString(b)
-	gdb.Model(user).Update("token", token)
+	now := time.Now()
+	gdb.Model(user).Updates(map[string]interface{}{
+		"token":           token,
+		"token_issued_at": now,
+		"sudo_auth_at":    now,
+	})
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    token,
 		Path:     "/",
-		MaxAge:   int((7 * 24 * time.Hour).Seconds()),
+		MaxAge:   int(sessionTimeout().Seconds()),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
+	user.Token = token
+	user.TokenIssuedAt = now
+	user.SudoAuthAt = now
 	return token
 }
 
@@ -62,7 +70,11 @@ func clearSessionCookie(w http.ResponseWriter) {
 func handleLogout(w http.ResponseWriter, r *http.Request) {
 	token := bearerTokenFromRequest(r)
 	if token != "" {
-		gdb.Model(&User{}).Where("token = ?", token).Update("token", "")
+		gdb.Model(&User{}).Where("token = ?", token).Updates(map[string]interface{}{
+			"token":           "",
+			"token_issued_at": time.Time{},
+			"sudo_auth_at":    time.Time{},
+		})
 	}
 	clearSessionCookie(w)
 	w.WriteHeader(http.StatusNoContent)
@@ -84,11 +96,21 @@ func handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":           user.ID,
-		"username":     user.Username,
-		"is_admin":     user.IsAdmin,
-		"totp_enabled": user.TOTPEnabled,
-		"oidc_login":   user.OIDCSubject != nil,
+		"id":                   user.ID,
+		"username":             user.Username,
+		"is_admin":             userIsAdmin(user),
+		"is_moderator":         userIsModeratorOnly(user),
+		"role":                 userRole(user),
+		"totp_enabled":         user.TOTPEnabled,
+		"oidc_login":           user.OIDCSubject != nil,
+		"sudo_active":          userHasActiveSudo(user, time.Now()),
+		"sudo_expires_at":      userSudoExpiry(user),
+		"can_manage_users":     userCanManageUsers(user),
+		"can_manage_settings":  userIsAdmin(user),
+		"can_manage_acls":      userIsAdmin(user),
+		"can_manage_transports": userIsAdmin(user),
+		"can_manage_forwards":  userIsAdmin(user),
+		"can_manage_turn":      userIsAdmin(user),
 	})
 }
 
@@ -198,6 +220,35 @@ func handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	gdb.Model(&user).Updates(map[string]interface{}{"totp_enabled": false, "totp_secret": ""})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func handleReauth(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUserFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if user.OIDCSubject != nil {
+		http.Error(w, "Password re-authentication is unavailable for OIDC accounts", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+		TOTPCode string `json:"totp_code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	if !verifyPassword(req.Password, user.PasswordHash) {
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+	if user.TOTPEnabled && !verifyTOTPCode(decryptAtRest(user.TOTPSecret), req.TOTPCode, time.Now()) {
+		http.Error(w, "Invalid two-factor code", http.StatusUnauthorized)
+		return
+	}
+	refreshUserSudo(&user)
 	w.WriteHeader(http.StatusNoContent)
 }
 

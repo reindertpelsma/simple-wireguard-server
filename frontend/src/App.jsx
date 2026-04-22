@@ -3,14 +3,7 @@ import { ShieldAlert } from 'lucide-react';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import SharedConfigPage from './components/SharedConfigPage';
-
-function getInitialTheme() {
-  const stored = localStorage.getItem('theme');
-  if (stored === 'light' || stored === 'dark') {
-    return stored;
-  }
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-}
+import { applyTheme, resolveInitialTheme, watchOSTheme } from './lib/theme';
 
 function getSharedToken() {
   const match = window.location.pathname.match(/^\/config\/([^/]+)$/);
@@ -20,13 +13,14 @@ function getSharedToken() {
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('token'));
   const [isSecure] = useState(() => window.isSecureContext);
-  const [theme, setTheme] = useState(getInitialTheme);
+  const [theme, setTheme] = useState(resolveInitialTheme);
   const sharedToken = getSharedToken();
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem('theme', theme);
+    applyTheme(theme);
   }, [theme]);
+
+  useEffect(() => watchOSTheme(setTheme), []);
 
   const toggleTheme = () => {
     setTheme((current) => current === 'dark' ? 'light' : 'dark');

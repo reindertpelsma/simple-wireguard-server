@@ -12,6 +12,7 @@ import (
 
 var publicConfigKeys = []string{
 	"allow_custom_private_key",
+	"auth_sudo_timeout_seconds",
 	"client_allowed_ips",
 	"client_dns",
 	"client_config_tcp",
@@ -19,6 +20,7 @@ var publicConfigKeys = []string{
 	"client_config_skipverifytls",
 	"client_config_url",
 	"peer_sync_mode",
+	"peers_visible_to_all",
 	"default_transport",
 	"e2e_encryption_enabled",
 	"enable_client_ipv6",
@@ -30,6 +32,7 @@ var publicConfigKeys = []string{
 	"server_pubkey",
 	"turn_hosting_enabled",
 	"turn_allow_user_credentials",
+	"turn_listener_count",
 	"turn_max_user_credentials",
 }
 
@@ -52,6 +55,7 @@ func publicConfigMap() map[string]string {
 	configs["server_endpoint"] = resolvedServerEndpoint()
 	configs["default_transport"] = resolveDefaultTransportNameUI()
 	configs["client_config_control_url"] = resolvedPeerSyncControlURL()
+	configs["turn_listener_count"] = fmt.Sprint(len(listEnabledTURNListeners()))
 	if profiles, err := json.Marshal(buildClientTransportProfiles("")); err == nil {
 		configs["client_transport_profiles"] = string(profiles)
 	}
@@ -63,6 +67,9 @@ func adminConfigMap() map[string]string {
 	var list []GlobalConfig
 	gdb.Find(&list)
 	for _, c := range list {
+		if c.Key == "server_privkey" {
+			continue
+		}
 		configs[c.Key] = c.Value
 	}
 	return configs

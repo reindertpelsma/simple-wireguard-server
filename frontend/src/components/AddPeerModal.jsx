@@ -103,14 +103,6 @@ export default function AddPeerModal({ onClose, onSuccess }) {
               />
             </div>
 
-            <div className="info-tile md:col-span-2">
-              <strong>Storage mode</strong>
-              <p className="text-sm text-[var(--muted)]">
-                {globalConfig.e2e_encryption_enabled === 'true'
-                  ? 'Private keys are browser-encrypted before they reach the server.'
-                  : 'Private keys are managed server-side so you can reopen configs later without a browser nonce.'}
-              </p>
-            </div>
           </div>
 
           <button

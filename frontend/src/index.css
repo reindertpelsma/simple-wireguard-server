@@ -554,7 +554,7 @@ code, pre {
   flex-wrap: wrap;
 }
 
-@media (max-width: 767px) {
+@media (max-width: 1024px) {
   .panel,
   .hero-panel,
   .peer-card,
@@ -614,6 +614,12 @@ code, pre {
     justify-content: stretch;
   }
 
+  .bandwidth-input {
+    grid-template-columns: minmax(0, 1fr) 7rem;
+  }
+}
+
+@media (max-width: 640px) {
   .bandwidth-input {
     grid-template-columns: 1fr;
   }

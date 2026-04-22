@@ -169,6 +169,8 @@ type User struct {
 	Username     string  `gorm:"uniqueIndex;not null" json:"username"`
 	PasswordHash string  `json:"-"`
 	Token        string  `gorm:"uniqueIndex" json:"token,omitempty"`
+	TokenIssuedAt time.Time `json:"-"`
+	SudoAuthAt    time.Time `json:"-"`
 	IsAdmin      bool    `gorm:"default:false" json:"is_admin"`
 	MaxConfigs   int     `gorm:"default:10" json:"max_configs"`
 	TOTPSecret   string  `json:"-"`
@@ -241,6 +243,7 @@ type GlobalConfig struct {
 type ACLRule struct {
 	ID        uint   `gorm:"primaryKey" json:"id"`
 	ListName  string `gorm:"not null" json:"list_name"` // inbound, outbound, relay
+	Name      string `json:"name,omitempty"`
 	Action    string `gorm:"not null" json:"action"`    // allow, deny
 	Src       string `json:"src,omitempty"`
 	SrcUsers  string `json:"src_users,omitempty"`
@@ -600,16 +603,17 @@ func main() {
 	// Auth
 	mux.HandleFunc("POST /api/login", handleLogin)
 	mux.HandleFunc("POST /api/logout", authMiddleware(handleLogout))
+	mux.HandleFunc("POST /api/auth/reauth", authMiddleware(handleReauth))
 	mux.HandleFunc("GET /api/auth/methods", handleAuthMethods)
 	mux.HandleFunc("GET /api/auth/hmac-nonce", authMiddleware(handleHMACNonce))
 	mux.HandleFunc("GET /api/me", authMiddleware(handleMe))
-	mux.HandleFunc("PATCH /api/me", authMiddleware(handleUpdateMe))
-	mux.HandleFunc("POST /api/me/2fa/setup", authMiddleware(handleTOTPSetup))
-	mux.HandleFunc("POST /api/me/2fa/enable", authMiddleware(handleTOTPEnable))
-	mux.HandleFunc("DELETE /api/me/2fa", authMiddleware(handleTOTPDisable))
+	mux.HandleFunc("PATCH /api/me", authMiddleware(sudoMiddleware(handleUpdateMe)))
+	mux.HandleFunc("POST /api/me/2fa/setup", authMiddleware(sudoMiddleware(handleTOTPSetup)))
+	mux.HandleFunc("POST /api/me/2fa/enable", authMiddleware(sudoMiddleware(handleTOTPEnable)))
+	mux.HandleFunc("DELETE /api/me/2fa", authMiddleware(sudoMiddleware(handleTOTPDisable)))
 	mux.HandleFunc("GET /api/me/proxy-credentials", authMiddleware(handleGetMyProxyCredentials))
-	mux.HandleFunc("POST /api/me/proxy-credentials", authMiddleware(handleCreateMyProxyCredential))
-	mux.HandleFunc("DELETE /api/me/proxy-credentials/{id}", authMiddleware(handleDeleteMyProxyCredential))
+	mux.HandleFunc("POST /api/me/proxy-credentials", authMiddleware(sudoMiddleware(handleCreateMyProxyCredential)))
+	mux.HandleFunc("DELETE /api/me/proxy-credentials/{id}", authMiddleware(sudoMiddleware(handleDeleteMyProxyCredential)))
 	mux.HandleFunc("GET /api/oidc/login", handleOIDCLogin)
 	mux.HandleFunc("GET /api/oidc/callback", handleOIDCCallback)
 	mux.HandleFunc("GET /api/share/{token}", handleGetSharedConfig)
@@ -617,51 +621,51 @@ func main() {
 
 	// Peer Management
 	mux.HandleFunc("GET /api/peers", authMiddleware(handleGetPeers))
-	mux.HandleFunc("POST /api/peers", authMiddleware(handleCreatePeer))
-	mux.HandleFunc("PATCH /api/peers/{id}", authMiddleware(handleUpdatePeer))
-	mux.HandleFunc("DELETE /api/peers/{id}", authMiddleware(handleDeletePeer))
-	mux.HandleFunc("GET /api/peers/{id}/private", authMiddleware(handleGetPeerPrivate))
+	mux.HandleFunc("POST /api/peers", authMiddleware(sudoMiddleware(handleCreatePeer)))
+	mux.HandleFunc("PATCH /api/peers/{id}", authMiddleware(sudoMiddleware(handleUpdatePeer)))
+	mux.HandleFunc("DELETE /api/peers/{id}", authMiddleware(sudoMiddleware(handleDeletePeer)))
+	mux.HandleFunc("GET /api/peers/{id}/private", authMiddleware(sudoMiddleware(handleGetPeerPrivate)))
 	mux.HandleFunc("POST /api/peers/{id}/ping", authMiddleware(handlePingPeer))
-	mux.HandleFunc("POST /api/peers/{id}/share-links", authMiddleware(handleCreateShareLink))
+	mux.HandleFunc("POST /api/peers/{id}/share-links", authMiddleware(sudoMiddleware(handleCreateShareLink)))
 	mux.HandleFunc("GET /api/distribute-peers", authMiddleware(handleGetDistributePeers))
 
 	// Admin - Users
-	mux.HandleFunc("GET /api/admin/users", authMiddleware(adminMiddleware(handleGetUsers)))
-	mux.HandleFunc("POST /api/admin/users", authMiddleware(adminMiddleware(handleCreateUser)))
-	mux.HandleFunc("PATCH /api/admin/users/{id}", authMiddleware(adminMiddleware(handleUpdateUser)))
-	mux.HandleFunc("DELETE /api/admin/users/{id}", authMiddleware(adminMiddleware(handleDeleteUser)))
-	mux.HandleFunc("DELETE /api/admin/users/{id}/2fa", authMiddleware(adminMiddleware(handleAdminDeleteUserTOTP)))
+	mux.HandleFunc("GET /api/admin/users", authMiddleware(userManagerMiddleware(handleGetUsers)))
+	mux.HandleFunc("POST /api/admin/users", authMiddleware(sudoMiddleware(userManagerMiddleware(handleCreateUser))))
+	mux.HandleFunc("PATCH /api/admin/users/{id}", authMiddleware(sudoMiddleware(userManagerMiddleware(handleUpdateUser))))
+	mux.HandleFunc("DELETE /api/admin/users/{id}", authMiddleware(sudoMiddleware(userManagerMiddleware(handleDeleteUser))))
+	mux.HandleFunc("DELETE /api/admin/users/{id}/2fa", authMiddleware(sudoMiddleware(userManagerMiddleware(handleAdminDeleteUserTOTP))))
 	mux.HandleFunc("GET /api/admin/tags", authMiddleware(adminMiddleware(handleGetTags)))
-	mux.HandleFunc("POST /api/admin/tags", authMiddleware(adminMiddleware(handleCreateTag)))
-	mux.HandleFunc("PATCH /api/admin/tags/{id}", authMiddleware(adminMiddleware(handleUpdateTag)))
-	mux.HandleFunc("DELETE /api/admin/tags/{id}", authMiddleware(adminMiddleware(handleDeleteTag)))
+	mux.HandleFunc("POST /api/admin/tags", authMiddleware(sudoMiddleware(adminMiddleware(handleCreateTag))))
+	mux.HandleFunc("PATCH /api/admin/tags/{id}", authMiddleware(sudoMiddleware(adminMiddleware(handleUpdateTag))))
+	mux.HandleFunc("DELETE /api/admin/tags/{id}", authMiddleware(sudoMiddleware(adminMiddleware(handleDeleteTag))))
 
 	// Admin - ACLs
 	mux.HandleFunc("GET /api/admin/acls", authMiddleware(adminMiddleware(handleGetACLs)))
-	mux.HandleFunc("POST /api/admin/acls", authMiddleware(adminMiddleware(handleCreateACL)))
-	mux.HandleFunc("PATCH /api/admin/acls/{id}", authMiddleware(adminMiddleware(handleUpdateACL)))
-	mux.HandleFunc("DELETE /api/admin/acls/{id}", authMiddleware(adminMiddleware(handleDeleteACL)))
-	mux.HandleFunc("POST /api/admin/acls/reorder", authMiddleware(adminMiddleware(handleReorderACLs)))
+	mux.HandleFunc("POST /api/admin/acls", authMiddleware(sudoMiddleware(adminMiddleware(handleCreateACL))))
+	mux.HandleFunc("PATCH /api/admin/acls/{id}", authMiddleware(sudoMiddleware(adminMiddleware(handleUpdateACL))))
+	mux.HandleFunc("DELETE /api/admin/acls/{id}", authMiddleware(sudoMiddleware(adminMiddleware(handleDeleteACL))))
+	mux.HandleFunc("POST /api/admin/acls/reorder", authMiddleware(sudoMiddleware(adminMiddleware(handleReorderACLs))))
 	mux.HandleFunc("GET /api/admin/acl-tokens", authMiddleware(adminMiddleware(handleACLTokenSearch)))
 
 	// Admin - Forwards
 	mux.HandleFunc("GET /api/admin/forwards", authMiddleware(adminMiddleware(handleGetForwards)))
-	mux.HandleFunc("POST /api/admin/forwards", authMiddleware(adminMiddleware(handleCreateForward)))
-	mux.HandleFunc("PATCH /api/admin/forwards/{id}", authMiddleware(adminMiddleware(handleUpdateForward)))
-	mux.HandleFunc("DELETE /api/admin/forwards/{id}", authMiddleware(adminMiddleware(handleDeleteForward)))
+	mux.HandleFunc("POST /api/admin/forwards", authMiddleware(sudoMiddleware(adminMiddleware(handleCreateForward))))
+	mux.HandleFunc("PATCH /api/admin/forwards/{id}", authMiddleware(sudoMiddleware(adminMiddleware(handleUpdateForward))))
+	mux.HandleFunc("DELETE /api/admin/forwards/{id}", authMiddleware(sudoMiddleware(adminMiddleware(handleDeleteForward))))
 
 	mux.HandleFunc("GET /api/admin/transports", authMiddleware(adminMiddleware(handleGetTransports)))
-	mux.HandleFunc("POST /api/admin/transports", authMiddleware(adminMiddleware(handleCreateTransport)))
-	mux.HandleFunc("PATCH /api/admin/transports/{id}", authMiddleware(adminMiddleware(handleUpdateTransport)))
-	mux.HandleFunc("DELETE /api/admin/transports/{id}", authMiddleware(adminMiddleware(handleDeleteTransport)))
+	mux.HandleFunc("POST /api/admin/transports", authMiddleware(sudoMiddleware(adminMiddleware(handleCreateTransport))))
+	mux.HandleFunc("PATCH /api/admin/transports/{id}", authMiddleware(sudoMiddleware(adminMiddleware(handleUpdateTransport))))
+	mux.HandleFunc("DELETE /api/admin/transports/{id}", authMiddleware(sudoMiddleware(adminMiddleware(handleDeleteTransport))))
 	registerTURNRoutes(mux)
 
 	// Admin - Config
 	mux.HandleFunc("GET /api/admin/config", authMiddleware(adminMiddleware(handleGetAdminConfig)))
-	mux.HandleFunc("POST /api/admin/config", authMiddleware(adminMiddleware(handleUpdateGlobalConfig)))
+	mux.HandleFunc("POST /api/admin/config", authMiddleware(sudoMiddleware(adminMiddleware(handleUpdateGlobalConfig))))
 	mux.HandleFunc("GET /api/admin/yaml", authMiddleware(adminMiddleware(handleGetYAMLConfig)))
-	mux.HandleFunc("POST /api/admin/yaml", authMiddleware(adminMiddleware(handleSaveYAMLConfig)))
-	mux.HandleFunc("POST /api/admin/restart", authMiddleware(adminMiddleware(handleRestartDaemon)))
+	mux.HandleFunc("POST /api/admin/yaml", authMiddleware(sudoMiddleware(adminMiddleware(handleSaveYAMLConfig))))
+	mux.HandleFunc("POST /api/admin/restart", authMiddleware(sudoMiddleware(adminMiddleware(handleRestartDaemon))))
 	mux.HandleFunc("GET /api/config/public", authMiddleware(handleGetPublicConfig))
 	mux.HandleFunc("GET /api/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "openapi.yaml")
@@ -848,6 +852,7 @@ func initGlobalSettings() {
 		"enable_client_ipv6":       ipv6Default,
 		"public_keys_visible":      "false",
 		"endpoints_visible":        "false",
+		"peers_visible_to_all":     "true",
 		"peer_sync_mode":           "disabled",
 		"peer_sync_port":           strconv.Itoa(randomInt(20000, 60000)),
 		"allow_custom_private_key": "true",
@@ -881,6 +886,8 @@ func initGlobalSettings() {
 		"http_proxy_access_enabled":   "false",
 		"socket_proxy_enabled":        "false",
 		"socket_proxy_http_port":      strconv.Itoa(findFreePort()),
+		"auth_sudo_timeout_seconds":   "600",
+		"auth_session_timeout_seconds": strconv.Itoa(int((7 * 24 * time.Hour).Seconds())),
 		"exposed_services_enabled":    "true",
 		"service_auth_cookie_seconds": strconv.Itoa(int((12 * time.Hour).Seconds())),
 		"turn_hosting_enabled":        "false",
@@ -910,7 +917,7 @@ func initGlobalSettings() {
 	bootstrapBuiltInGroups()
 }
 
-// bootstrapBuiltInGroups ensures the "default" and "admin" built-in groups
+// bootstrapBuiltInGroups ensures the built-in policy and role groups
 // exist. Called once during init. Existing users/peers with no PrimaryGroup
 // are assigned to "default".
 func bootstrapBuiltInGroups() {
@@ -932,6 +939,11 @@ func bootstrapBuiltInGroups() {
 	if gdb.First(&adminGroup, "name = ?", "admin").Error != nil {
 		adminGroup = Group{Name: "admin", BuiltIn: true}
 		gdb.Create(&adminGroup)
+	}
+	var moderatorGroup Group
+	if gdb.First(&moderatorGroup, "name = ?", "moderator").Error != nil {
+		moderatorGroup = Group{Name: "moderator", BuiltIn: true}
+		gdb.Create(&moderatorGroup)
 	}
 
 	// Migrate existing users: assign primary group and sync admin group membership.
@@ -999,9 +1011,21 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, "Invalid Token", http.StatusUnauthorized)
 			return
 		}
+		if userSessionExpired(user, time.Now()) {
+			gdb.Model(&user).Updates(map[string]interface{}{
+				"token":           "",
+				"token_issued_at": time.Time{},
+				"sudo_auth_at":    time.Time{},
+			})
+			clearSessionCookie(w)
+			http.Error(w, "Session expired", http.StatusUnauthorized)
+			return
+		}
 
 		r.Header.Set("X-User-Id", fmt.Sprint(user.ID))
 		r.Header.Set("X-Is-Admin", fmt.Sprint(userIsAdmin(user)))
+		r.Header.Set("X-Is-Moderator", fmt.Sprint(userIsModeratorOnly(user)))
+		r.Header.Set("X-User-Role", userRole(user))
 		next.ServeHTTP(w, r)
 	}
 }
@@ -1009,6 +1033,16 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 func adminMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Is-Admin") != "true" {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	}
+}
+
+func userManagerMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Is-Admin") != "true" && r.Header.Get("X-Is-Moderator") != "true" {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
@@ -1371,6 +1405,7 @@ func handleGetPeers(w http.ResponseWriter, r *http.Request) {
 
 	pubVisible := getConfig("public_keys_visible") == "true"
 	endVisible := getConfig("endpoints_visible") == "true"
+	peersVisible := getConfig("peers_visible_to_all") != "false"
 
 	var peers []Peer
 	gdb.Preload("User").Find(&peers)
@@ -1401,6 +1436,10 @@ func handleGetPeers(w http.ResponseWriter, r *http.Request) {
 		p.IsOwner = isOwner
 		p.HasPrivateKeyMaterial = peerHasPrivateKeyMaterial(p)
 		p.TrafficHistory = trafficHistory.History(p.PublicKey)
+
+		if !isAdmin && !isOwner && !peersVisible {
+			continue
+		}
 
 		if !isAdmin && !isOwner {
 			if !pubVisible {
@@ -1663,6 +1702,13 @@ func handleUpdateGlobalConfig(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(r.Body).Decode(&req)
 	turnChanged := false
 	for k, v := range req {
+		if k == "server_privkey" {
+			continue
+		}
+		if err := validateConfigValue(k, v); err != nil {
+			http.Error(w, fmt.Sprintf("invalid %s: %v", k, err), http.StatusBadRequest)
+			return
+		}
 		gdb.Model(&GlobalConfig{}).Where("key = ?", k).Update("value", v)
 		if strings.HasPrefix(k, "turn_") {
 			turnChanged = true
@@ -1685,6 +1731,10 @@ func handleGetUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleCreateUser(w http.ResponseWriter, r *http.Request) {
+	actor, ok := currentUserFromRequest(w, r)
+	if !ok {
+		return
+	}
 	var req struct {
 		Username     string `json:"username"`
 		Password     string `json:"password"`
@@ -1703,6 +1753,14 @@ func handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if additionalGroups == "" {
 		additionalGroups = req.Tags
 	}
+	groups := splitCSVList(additionalGroups)
+	if req.IsAdmin && !containsToken(groups, "admin") {
+		groups = append(groups, "admin")
+	}
+	if userIsModeratorOnly(actor) && (containsToken(groups, "admin") || containsToken(groups, "moderator") || req.IsAdmin) {
+		http.Error(w, "Moderators cannot create admin or moderator users", http.StatusForbidden)
+		return
+	}
 
 	// Default primary group to "default".
 	primaryGroup := normalizeGroupName(req.PrimaryGroup)
@@ -1714,11 +1772,6 @@ func handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The admin group is authoritative; the is_admin flag is accepted for legacy clients.
-	groups := splitCSVList(additionalGroups)
-	if req.IsAdmin && !containsToken(groups, "admin") {
-		groups = append(groups, "admin")
-	}
 	isAdmin := req.IsAdmin || containsToken(groups, "admin")
 
 	hp, _ := hashPassword(req.Password)
@@ -1737,10 +1790,18 @@ func handleCreateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleUpdateUser(w http.ResponseWriter, r *http.Request) {
+	actor, ok := currentUserFromRequest(w, r)
+	if !ok {
+		return
+	}
 	id := r.PathValue("id")
 	var user User
 	if err := gdb.First(&user, id).Error; err != nil {
 		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+	if !userCanManageTargetUser(actor, user) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	var req struct {
@@ -1757,8 +1818,22 @@ func handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	// Accept both "groups" and legacy "tags" for the additional groups field.
 	if req.Groups != nil {
+		if userIsModeratorOnly(actor) {
+			next := splitCSVList(*req.Groups)
+			if containsToken(next, "admin") || containsToken(next, "moderator") {
+				http.Error(w, "Moderators cannot grant admin or moderator access", http.StatusForbidden)
+				return
+			}
+		}
 		user.Tags = normalizeGroupList(splitCSVList(*req.Groups))
 	} else if req.Tags != nil {
+		if userIsModeratorOnly(actor) {
+			next := splitCSVList(*req.Tags)
+			if containsToken(next, "admin") || containsToken(next, "moderator") {
+				http.Error(w, "Moderators cannot grant admin or moderator access", http.StatusForbidden)
+				return
+			}
+		}
 		user.Tags = normalizeGroupList(splitCSVList(*req.Tags))
 	}
 	if req.PrimaryGroup != nil {
@@ -1772,6 +1847,10 @@ func handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.IsAdmin != nil {
+		if userIsModeratorOnly(actor) {
+			http.Error(w, "Moderators cannot change admin access", http.StatusForbidden)
+			return
+		}
 		user.IsAdmin = *req.IsAdmin
 		// Sync admin group membership.
 		groups := splitCSVList(user.Tags)
@@ -1820,10 +1899,18 @@ func handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAdminDeleteUserTOTP(w http.ResponseWriter, r *http.Request) {
+	actor, ok := currentUserFromRequest(w, r)
+	if !ok {
+		return
+	}
 	id := r.PathValue("id")
 	var user User
 	if err := gdb.First(&user, id).Error; err != nil {
 		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+	if !userCanManageTargetUser(actor, user) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	gdb.Model(&user).Updates(map[string]interface{}{"totp_enabled": false, "totp_secret": ""})
@@ -1937,12 +2024,25 @@ func handleDeleteMyProxyCredential(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleDeleteUser(w http.ResponseWriter, r *http.Request) {
+	actor, ok := currentUserFromRequest(w, r)
+	if !ok {
+		return
+	}
 	id := r.PathValue("id")
 	if id == "1" {
 		http.Error(w, "Cannot delete primary admin", http.StatusForbidden)
 		return
 	}
-	gdb.Delete(&User{}, id)
+	var user User
+	if err := gdb.First(&user, id).Error; err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+	if !userCanManageTargetUser(actor, user) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+	gdb.Delete(&user)
 	generateCanonicalYAML()
 	pushACLsToDaemon()
 	w.WriteHeader(http.StatusOK)
@@ -2080,6 +2180,7 @@ func handleGetACLs(w http.ResponseWriter, r *http.Request) {
 }
 
 func normalizeACLRule(a *ACLRule) {
+	a.Name = strings.TrimSpace(a.Name)
 	a.Src = joinCSVList(splitCSVList(a.Src))
 	a.SrcUsers = joinCSVList(splitCSVList(a.SrcUsers))
 	a.SrcTags = joinCSVList(splitCSVList(a.SrcTags))

@@ -160,10 +160,11 @@ const loginPageHTML = `<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sign in · uwgsocks-ui</title>
+  <title>Sign in · Simple WireGuard Server</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <style>
-    :root { color-scheme: light; --bg:#edf3ea; --ink:#10222d; --muted:#5e7480; --panel:rgba(255,255,255,.86); --line:rgba(16,34,45,.14); --accent:#0f766e; --accent2:#d97706; --danger:#c2410c; }
-    :root[data-theme="dark"] { color-scheme: dark; --bg:#07131a; --ink:#e6f3f2; --muted:#90a9b2; --panel:rgba(10,23,31,.9); --line:rgba(230,243,242,.12); --accent:#5eead4; --accent2:#fb923c; --danger:#fb923c; }
+    :root { color-scheme: light; --bg:#edf3ea; --ink:#10222d; --muted:#5e7480; --panel:rgba(255,255,255,.86); --line:rgba(16,34,45,.14); --accent:#0f766e; --accent2:#d97706; --danger:#c2410c; --input:rgba(255,255,255,.94); }
+    :root[data-theme="dark"] { color-scheme: dark; --bg:#07131a; --ink:#e6f3f2; --muted:#90a9b2; --panel:rgba(10,23,31,.9); --line:rgba(230,243,242,.12); --accent:#5eead4; --accent2:#fb923c; --danger:#fb923c; --input:rgba(7,19,26,.96); }
     * { box-sizing:border-box; }
     body { min-height:100vh; margin:0; display:grid; place-items:center; padding:24px; color:var(--ink); font-family:"Space Grotesk","Avenir Next","Segoe UI",sans-serif; background:radial-gradient(circle at 10% 10%,rgba(15,118,110,.18),transparent 30%),radial-gradient(circle at 90% 0,rgba(217,119,6,.16),transparent 26%),linear-gradient(180deg,var(--panel),var(--bg)); }
     main { width:min(100%,960px); display:grid; gap:20px; grid-template-columns:1.05fr .95fr; align-items:stretch; }
@@ -177,7 +178,7 @@ const loginPageHTML = `<!doctype html>
     p { color:var(--muted); line-height:1.65; }
     form { display:grid; gap:16px; margin-top:24px; }
     label { display:grid; gap:8px; color:var(--muted); font-size:12px; font-weight:800; letter-spacing:.14em; text-transform:uppercase; }
-    input { width:100%; border:1px solid var(--line); border-radius:16px; padding:14px 15px; background:rgba(255,255,255,.94); color:var(--ink); font:inherit; outline:none; }
+    input { width:100%; border:1px solid var(--line); border-radius:16px; padding:14px 15px; background:var(--input); color:var(--ink); font:inherit; outline:none; }
     input:focus { border-color:var(--accent); box-shadow:0 0 0 4px rgba(15,118,110,.13); }
     button,a.button { display:inline-flex; justify-content:center; align-items:center; gap:8px; border-radius:999px; border:0; padding:14px 18px; color:#effcf9; background:linear-gradient(135deg,#115e59,#0f766e); font-weight:850; text-decoration:none; cursor:pointer; }
     button.secondary,a.secondary { border:1px solid var(--line); background:rgba(15,118,110,.1); color:var(--accent); }
@@ -200,7 +201,7 @@ const loginPageHTML = `<!doctype html>
   </div>
   <main>
     <section class="card">
-      <span class="eyebrow">Operator Login</span>
+      <span class="eyebrow">Simple WireGuard Server</span>
       <div style="display:grid;gap:8px;margin-top:14px">
         <h2>Sign in Wireguard</h2>
       </div>
@@ -217,15 +218,74 @@ const loginPageHTML = `<!doctype html>
   </main>
   <script>
     const root = document.documentElement;
-    const storedTheme = localStorage.getItem('theme');
-    if (storedTheme === 'dark' || storedTheme === 'light') {
-      root.dataset.theme = storedTheme;
+    const THEME_KEY = 'ui_theme';
+    const OS_THEME_KEY = 'ui_theme_os';
+    function cookieGet(name) {
+      const prefix = name + '=';
+      for (const part of document.cookie.split(';')) {
+        const value = part.trim();
+        if (value.startsWith(prefix)) return decodeURIComponent(value.slice(prefix.length));
+      }
+      return '';
     }
+    function cookieSet(name, value) {
+      document.cookie = name + '=' + encodeURIComponent(value) + '; Path=/; Max-Age=31536000; SameSite=Lax';
+    }
+    function detectOSTheme() {
+      try {
+        if (!window.matchMedia) return 'light';
+        return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      } catch {
+        return 'light';
+      }
+    }
+    function persistTheme(theme, osTheme) {
+      try {
+        localStorage.setItem(THEME_KEY, theme);
+        localStorage.setItem(OS_THEME_KEY, osTheme);
+      } catch {}
+      cookieSet(THEME_KEY, theme);
+      cookieSet(OS_THEME_KEY, osTheme);
+    }
+    function resolveTheme() {
+      const osTheme = detectOSTheme();
+      let savedTheme = '';
+      let savedOS = '';
+      try {
+        savedTheme = localStorage.getItem(THEME_KEY) || '';
+        savedOS = localStorage.getItem(OS_THEME_KEY) || '';
+      } catch {}
+      if (!savedTheme) savedTheme = cookieGet(THEME_KEY);
+      if (!savedOS) savedOS = cookieGet(OS_THEME_KEY);
+      if (savedOS !== osTheme) {
+        persistTheme(osTheme, osTheme);
+        return osTheme;
+      }
+      if (savedTheme === 'dark' || savedTheme === 'light') {
+        persistTheme(savedTheme, osTheme);
+        return savedTheme;
+      }
+      persistTheme(osTheme, osTheme);
+      return osTheme;
+    }
+    root.dataset.theme = resolveTheme();
     document.getElementById('theme-toggle').addEventListener('click', () => {
       const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
       root.dataset.theme = next;
-      localStorage.setItem('theme', next);
+      persistTheme(next, detectOSTheme());
     });
+    try {
+      if (window.matchMedia) {
+        const query = window.matchMedia('(prefers-color-scheme: dark)');
+        const onChange = () => {
+          const next = detectOSTheme();
+          root.dataset.theme = next;
+          persistTheme(next, next);
+        };
+        if (query.addEventListener) query.addEventListener('change', onChange);
+        else if (query.addListener) query.addListener(onChange);
+      }
+    } catch {}
     const form = document.getElementById('login-form');
     const errorBox = document.getElementById('error');
     const submit = document.getElementById('submit');

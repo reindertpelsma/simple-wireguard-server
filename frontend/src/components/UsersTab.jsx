@@ -33,10 +33,44 @@ function UserPasswordForm({ user, onDone }) {
   );
 }
 
-export default function UsersTab() {
+function userRole(user) {
+  const groups = String(user.groups || '').split(',').map((v) => v.trim().toLowerCase()).filter(Boolean);
+  if (user.is_admin || groups.includes('admin')) return 'Administrator';
+  if (groups.includes('moderator')) return 'Moderator';
+  return 'User';
+}
+
+function userRoleValue(user) {
+  const role = userRole(user);
+  if (role === 'Administrator') return 'admin';
+  if (role === 'Moderator') return 'moderator';
+  return 'user';
+}
+
+function splitGroups(value) {
+  return String(value || '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function groupsWithRole(groupsValue, role) {
+  const filtered = splitGroups(groupsValue).filter((entry) => {
+    const lowered = entry.toLowerCase();
+    return lowered !== 'admin' && lowered !== 'moderator';
+  });
+  if (role === 'admin') {
+    filtered.push('admin');
+  } else if (role === 'moderator') {
+    filtered.push('moderator');
+  }
+  return filtered.join(', ');
+}
+
+export default function UsersTab({ me = null }) {
   const [users, setUsers] = useState([]);
   const [groups, setGroups] = useState([]);
-  const [newUser, setNewUser] = useState({ username: '', password: '', groups: '', primary_group: 'default' });
+  const [newUser, setNewUser] = useState({ username: '', password: '', groups: '', primary_group: 'default', role: 'user' });
   const [newGroup, setNewGroup] = useState({ name: '', parent_groups: '', extra_cidrs: '', subnet: '' });
   const [passwordEditId, setPasswordEditId] = useState(null);
   const [search, setSearch] = useState('');
@@ -71,8 +105,12 @@ export default function UsersTab() {
   const handleCreate = async (event) => {
     event.preventDefault();
     try {
-      await api.createUser(newUser);
-      setNewUser({ username: '', password: '', groups: '', primary_group: 'default' });
+      await api.createUser({
+        ...newUser,
+        groups: groupsWithRole(newUser.groups, newUser.role),
+        is_admin: newUser.role === 'admin',
+      });
+      setNewUser({ username: '', password: '', groups: '', primary_group: 'default', role: 'user' });
       fetchData();
     } catch (err) {
       alert(err.message);
@@ -91,6 +129,18 @@ export default function UsersTab() {
   const handleUpdateUserPrimaryGroup = async (user, primaryGroup) => {
     try {
       await api.updateUser(user.id, { primary_group: primaryGroup });
+      fetchData();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const handleUpdateUserRole = async (user, role) => {
+    try {
+      await api.updateUser(user.id, {
+        groups: groupsWithRole(user.groups || '', role),
+        is_admin: role === 'admin',
+      });
       fetchData();
     } catch (err) {
       alert(err.message);
@@ -177,7 +227,7 @@ export default function UsersTab() {
           </div>
         </div>
 
-        <form onSubmit={handleCreate} className="grid gap-4 md:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_auto] md:items-end">
+        <form onSubmit={handleCreate} className="grid gap-4 md:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_1fr_auto] md:items-end">
           <div className="space-y-2">
             <label className="field-label">Username</label>
             <input className="input-field" required value={newUser.username} onChange={(e) => setNewUser({ ...newUser, username: e.target.value })} />
@@ -200,9 +250,17 @@ export default function UsersTab() {
             </select>
           </div>
           <div className="space-y-2">
+            <label className="field-label">Role</label>
+            <select className="input-field" value={newUser.role} onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}>
+              <option value="user">User</option>
+              <option value="moderator">Moderator</option>
+              <option value="admin">Administrator</option>
+            </select>
+          </div>
+          <div className="space-y-2">
             <label className="field-label">Additional groups</label>
             <input className="input-field" placeholder="staff, lab" value={newUser.groups} onChange={(e) => setNewUser({ ...newUser, groups: e.target.value })} />
-            <p className="text-xs text-[var(--muted)]">Add <code className="font-mono">admin</code> here to grant administrator access.</p>
+            <p className="text-xs text-[var(--muted)]">Role access is managed with the role selector. Use groups for policy memberships only.</p>
           </div>
           <button type="submit" className="primary-button justify-center">
             <UserPlus size={16} />
@@ -297,7 +355,7 @@ export default function UsersTab() {
             <tr>
               <th>User</th>
               <th>Primary group</th>
-              <th>Access</th>
+              <th>Role</th>
               <th>Additional groups</th>
               <th>Created</th>
               <th></th>
@@ -311,6 +369,7 @@ export default function UsersTab() {
                   <select
                     className="input-field text-sm py-1 h-8"
                     value={user.primary_group || 'default'}
+                    disabled={me?.id === user.id}
                     onChange={(e) => {
                       setUsers(cur => cur.map(u => u.id === user.id ? { ...u, primary_group: e.target.value } : u));
                       handleUpdateUserPrimaryGroup(user, e.target.value);
@@ -323,22 +382,44 @@ export default function UsersTab() {
                   </select>
                 </td>
                 <td>
-                  {user.is_admin ? (
-                    <span className="status-chip">
-                      <ShieldCheck size={13} />
-                      Admin
-                    </span>
-                  ) : (
-                    <span className="status-chip status-chip-muted">
-                      <Shield size={13} />
-                      User
-                    </span>
-                  )}
+                  <div className="space-y-2">
+                    <select
+                      className="input-field h-8 py-1 text-sm"
+                      value={userRoleValue(user)}
+                      disabled={me?.id === user.id || user.id === 1}
+                      onChange={(e) => {
+                        const nextRole = e.target.value;
+                        setUsers((current) => current.map((entry) => entry.id === user.id ? { ...entry, is_admin: nextRole === 'admin', groups: groupsWithRole(entry.groups || '', nextRole) } : entry));
+                        handleUpdateUserRole(user, nextRole);
+                      }}
+                    >
+                      <option value="user">User</option>
+                      <option value="moderator">Moderator</option>
+                      <option value="admin">Administrator</option>
+                    </select>
+                    {userRole(user) === 'Administrator' ? (
+                      <span className="status-chip">
+                        <ShieldCheck size={13} />
+                        Administrator
+                      </span>
+                    ) : userRole(user) === 'Moderator' ? (
+                      <span className="status-chip status-chip-muted">
+                        <Shield size={13} />
+                        Moderator
+                      </span>
+                    ) : (
+                      <span className="status-chip status-chip-muted">
+                        <Shield size={13} />
+                        User
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td>
                   <input
                     className="input-field min-w-48"
                     value={user.groups || ''}
+                    disabled={me?.id === user.id}
                     onChange={(e) => setUsers((cur) => cur.map((u) => u.id === user.id ? { ...u, groups: e.target.value } : u))}
                     onBlur={(e) => handleUpdateUserGroups(user, e.target.value)}
                   />
@@ -353,6 +434,7 @@ export default function UsersTab() {
                           onClick={() => setPasswordEditId(passwordEditId === user.id ? null : user.id)}
                           className="ghost-button text-xs"
                           title="Change password"
+                          disabled={me?.id === user.id}
                         >
                           <KeyRound size={14} />
                         </button>
@@ -363,11 +445,17 @@ export default function UsersTab() {
                           onClick={() => handleAdminResetTOTP(user)}
                           className="ghost-button text-xs"
                           title="Remove 2FA"
+                          disabled={me?.id === user.id}
                         >
                           <ShieldOff size={14} />
                         </button>
                       )}
-                      <button type="button" onClick={() => handleDelete(user.id)} className="ghost-button ghost-button-danger">
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(user.id)}
+                        className="ghost-button ghost-button-danger"
+                        hidden={me?.id === user.id || user.id === 1 || userRole(user) === 'Administrator'}
+                      >
                         <Trash2 size={16} />
                         <span>Delete</span>
                       </button>
