@@ -1,46 +1,63 @@
 # Simple WireGuard Server
 
-Run a WireGuard server and browser-managed control plane without hand-editing
-YAML.
+Browser UI for managing WireGuard users, client configs, ACLs, and protected
+service exposure.
 
 `uwgsocks-ui` is the browser UI and management daemon for
 [userspace-wireguard-socks](https://github.com/reindertpelsma/userspace-wireguard-socks).
 It manages `uwgsocks` by default and can switch to `uwgkm` when you want kernel
 WireGuard on Linux.
 
+If you want the convenience of `wg-easy` style client management but you also
+want groups, ACLs, protected subdomain exposure, and the option to stay fully
+rootless, this is the control plane for that.
+
 For most deployments you only need two binaries on the same host:
 
 - `uwgsocks` for the data plane
 - `uwgsocks-ui` for the browser UI and management layer
 
-That keeps the setup close to plain `uwgsocks`: run it as a normal user, keep
-the stack rootless by default, and add optional extras only when you actually
-need them.
+That keeps the setup close to plain WireGuard config management: install the
+data plane, start the UI, create users, download configs, and only add extras
+when you actually need them.
 
-From the operator perspective, this is what it buys you:
+What operators get:
 
 - create, edit, disable, and expire WireGuard users and client configs from the browser
 - show QR codes, download config files, and issue one-time config share links
 - publish internal web services through login-protected subdomains
 - enforce groups and ACLs so peers only reach the networks and services they should
+- see connected peers and per-peer traffic charts in the UI
 - support local login, 2FA, and OIDC for operator access
+- run rootless by default with `uwgsocks`, or switch to `uwgkm` on Linux if you want kernel WireGuard
 - add optional extras like HTTP proxy access and TURN-based firewall traversal when you need them
 
 ![Dashboard overview](docs/assets/dashboard.jpg)
 
-## Install
+## Quick Start
 
-Install the required data plane from the main `uwgsocks` repository:
+Install the two required binaries:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/reindertpelsma/userspace-wireguard-socks/main/install.sh | sh -s -- uwgsocks
-```
-
-Install the UI from this repository:
-
-```bash
 curl -fsSL https://raw.githubusercontent.com/reindertpelsma/simple-wireguard-server/main/install.sh | sh -s -- uwgsocks-ui
 ```
+
+Start the UI:
+
+```bash
+uwgsocks-ui -listen 0.0.0.0:8080
+```
+
+On first start it creates the database, generates secrets, prints the bootstrap
+admin password, and starts a managed `uwgsocks` child daemon by default.
+
+Then open `http://YOUR-HOST:8080/login`, sign in, create your first user, and
+download a WireGuard config from the browser.
+
+![Login screen](docs/assets/login.jpg)
+
+## Install Options
 
 Optional extras:
 
@@ -83,24 +100,23 @@ Release tags also publish:
 
 - `ghcr.io/reindertpelsma/simple-wireguard-server:<tag>`
 
-## First Start
+## What It Manages
 
-```bash
-uwgsocks-ui -listen 0.0.0.0:8080
-```
+- WireGuard users and client configs:
+  create users, assign devices, download configs, scan QR codes, rotate access,
+  and send one-time share links without hand-editing `.conf` files
+- Policy and segmentation:
+  define groups, attach users and peers to them, and enforce ACLs that limit
+  which networks, ports, and services each peer can reach
+- Protected service exposure:
+  publish internal web apps through managed subdomains with login-gated access,
+  instead of opening those backends directly to the internet
+- Operator access:
+  keep admin login local with passwords and 2FA, or connect the UI to OIDC so
+  your team signs in with the identity provider you already use
 
-On first startup the UI:
-
-- creates `wgui.db`
-- generates `wgui_secrets.json`
-- prints a random admin password
-- prints a bootstrap WireGuard client config by default
-- starts and manages `uwgsocks` as a child daemon unless `-manage=false`
-
-Then open `http://YOUR-HOST:8080/login`, sign in with the bootstrap admin
-credentials, and start creating users, peers, ACLs, and services.
-
-![Login screen](docs/assets/login.jpg)
+Extras such as HTTP proxy access, `/socket`, TURN hosting, and `uwgkm` are
+available, but they are not required for the main WireGuard management flow.
 
 ## Documentation
 
@@ -128,6 +144,7 @@ Deep reference docs:
 - [Proxy and routing behavior](docs/reference/proxy-routing.md)
 - [Socket protocol](docs/reference/socket-protocol.md)
 - [Testing](docs/reference/testing.md)
+- [OpenAPI HTML reference](docs/reference/openapi.html)
 - [OpenAPI schema](docs/reference/openapi.yaml)
 
 ## Platform Status
