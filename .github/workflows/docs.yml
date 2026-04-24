@@ -1,0 +1,26 @@
+name: Docs
+
+on:
+  push:
+    paths:
+      - "README.md"
+      - "docs/**"
+      - "tests/check_docs.py"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "README.md"
+      - "docs/**"
+      - "tests/check_docs.py"
+      - ".github/workflows/docs.yml"
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Validate docs
+        run: python3 tests/check_docs.py

@@ -1,9 +1,31 @@
 <!-- Copyright (c) 2026 Reindert Pelsma -->
 <!-- SPDX-License-Identifier: ISC -->
 
-# Configuration Reference
+# Managed Daemon Configuration
 
-`uwgsocks` merges configuration from YAML, wg-quick config, and CLI flags. YAML is the base, `wireguard.config_file` and `wireguard.config` are merged into the WireGuard section, then CLI flags append or override values.
+This document describes the canonical `uwg_canonical.yaml` that
+`uwgsocks-ui` writes for the managed child daemon.
+
+Important scope note:
+
+- this is **not** the UI database config surface
+- this is the generated `uwgsocks` runtime config that the UI emits
+- admin UI settings such as `server_endpoint`, `web_base_url`, session timeouts,
+  TURN self-service policy, and visibility flags are documented in
+  [config-reference.md](config-reference.md)
+
+In most cases you should start with the UI-facing docs:
+
+- [../howto/01-install-and-bootstrap.md](../howto/01-install-and-bootstrap.md)
+- [config-reference.md](config-reference.md)
+- [cli-reference.md](cli-reference.md)
+
+Use this page when you want to understand what the UI is actually writing into
+the managed `uwgsocks` process.
+
+`uwgsocks` itself merges configuration from YAML, wg-quick config, and CLI
+flags. YAML is the base, `wireguard.config_file` and `wireguard.config` are
+merged into the WireGuard section, then CLI flags append or override values.
 
 ## WireGuard
 

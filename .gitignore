@@ -17,3 +17,4 @@ frontend/node_modules
 *.crt
 wgui_secrets.json
 uwg_canonical.yaml
+logs.txt

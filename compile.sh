@@ -82,6 +82,17 @@ if ! command -v npm >/dev/null 2>&1; then
   done
 fi
 
+if [ "${UWG_UI_SKIP_FRONTEND_BUILD:-0}" != "1" ]; then
+    if ! command -v node >/dev/null 2>&1; then
+        echo "Node.js is required for the frontend build. Install Node.js 20.19+." >&2
+        exit 127
+    fi
+    if ! node -e 'const [ma, mi] = process.versions.node.split(".").map(Number); if (ma < 20 || (ma === 20 && mi < 19)) process.exit(1)'; then
+        echo "Node.js 20.19+ is required for the frontend build." >&2
+        exit 1
+    fi
+fi
+
 if [ "${UWG_UI_SKIP_FRONTEND_BUILD:-0}" = "1" ]; then
     if [ ! -f "./dist/index.html" ]; then
         echo "UWG_UI_SKIP_FRONTEND_BUILD=1 was set but ./dist is missing. Provide a prebuilt dist/ first." >&2
