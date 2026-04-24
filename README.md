@@ -1,31 +1,39 @@
 # Simple WireGuard Server
 
-Run a WireGuard server, relay hub, protected service edge, and browser-managed
-control plane without hand-editing YAML.
+Run a WireGuard server and browser-managed control plane without hand-editing
+YAML.
 
 `uwgsocks-ui` is the browser UI and management daemon for
 [userspace-wireguard-socks](https://github.com/reindertpelsma/userspace-wireguard-socks).
 It manages `uwgsocks` by default and can switch to `uwgkm` when you want kernel
 WireGuard on Linux.
 
+For most deployments you only need two binaries on the same host:
+
+- `uwgsocks` for the data plane
+- `uwgsocks-ui` for the browser UI and management layer
+
+That keeps the setup close to plain `uwgsocks`: run it as a normal user, keep
+the stack rootless by default, and add optional extras only when you actually
+need them.
+
 From the operator perspective, this is what it buys you:
 
-- create users and peer configs from the browser
-- manage ACLs, forwards, transports, and live daemon updates without editing files
-- publish protected internal services through login-gated subdomains
-- expose `/proxy` and `/socket` access paths for browsers, tooling, and app-sidecars
-- run rootless by default on top of `uwgsocks`, without Docker privileges or host route surgery
-- host a managed TURN daemon and issue per-user TURN credentials from the same UI
+- create, edit, disable, and expire WireGuard users and client configs from the browser
+- show QR codes, download config files, and issue one-time config share links
+- publish internal web services through login-protected subdomains
+- enforce groups and ACLs so peers only reach the networks and services they should
+- support local login, 2FA, and OIDC for operator access
+- add optional extras like HTTP proxy access and TURN-based firewall traversal when you need them
 
 ![Dashboard overview](docs/assets/dashboard.jpg)
 
 ## Install
 
-Install the data plane from the main `uwgsocks` repository:
+Install the required data plane from the main `uwgsocks` repository:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/reindertpelsma/userspace-wireguard-socks/main/install.sh | sh -s -- uwgsocks
-curl -fsSL https://raw.githubusercontent.com/reindertpelsma/userspace-wireguard-socks/main/install.sh | sh -s -- turn
 ```
 
 Install the UI from this repository:
@@ -34,7 +42,15 @@ Install the UI from this repository:
 curl -fsSL https://raw.githubusercontent.com/reindertpelsma/simple-wireguard-server/main/install.sh | sh -s -- uwgsocks-ui
 ```
 
-Optional kernel-mode manager for Linux:
+Optional extras:
+
+TURN relay / firewall traversal support:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/reindertpelsma/userspace-wireguard-socks/main/install.sh | sh -s -- turn
+```
+
+Kernel-mode manager for Linux:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/reindertpelsma/simple-wireguard-server/main/install.sh | sh -s -- uwgkm
