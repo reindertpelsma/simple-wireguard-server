@@ -135,6 +135,9 @@ func TestServiceAuthFlowAndCORSGuard(t *testing.T) {
 	if w.Code != http.StatusFound {
 		t.Fatalf("expected service auth callback redirect, got %d: %s", w.Code, w.Body.String())
 	}
+	if got := w.Header().Get("Location"); got != "/admin" {
+		t.Fatalf("expected sanitized same-host redirect, got %q", got)
+	}
 	cookies := w.Result().Cookies()
 	if len(cookies) == 0 || cookies[0].Name != serviceCookieName(svc) {
 		t.Fatalf("expected service cookie, got %#v", cookies)
@@ -148,6 +151,38 @@ func TestServiceAuthFlowAndCORSGuard(t *testing.T) {
 	wrapRootHandler(http.NewServeMux()).ServeHTTP(w, req)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected CORS guarded POST to be rejected, got %d", w.Code)
+	}
+}
+
+func TestServiceAuthRejectsExternalNextRedirect(t *testing.T) {
+	setupTestDB(t)
+	_, token := createTestUser(t, "admin", true)
+	svc := ExposedService{
+		Name:      "switch",
+		Host:      "switch.wireguard.example.com",
+		TargetURL: "http://100.64.0.10",
+		AuthMode:  "login",
+	}
+	if err := gdb.Create(&svc).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	authToken := encryptServiceAuthToken(serviceAuthToken{
+		SessionID: token,
+		Service:   svc.Name,
+		Expires:   time.Now().Add(5 * time.Minute).Unix(),
+	})
+	form := "auth_token=" + url.QueryEscape(authToken) + "&next=" + url.QueryEscape("https://phish.example.com/login")
+	req := httptest.NewRequest("POST", "https://"+svc.Host+serviceAuthPath, strings.NewReader(form))
+	req.Host = svc.Host
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	wrapRootHandler(http.NewServeMux()).ServeHTTP(w, req)
+	if w.Code != http.StatusFound {
+		t.Fatalf("expected service auth callback redirect, got %d: %s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Location"); got != "/" {
+		t.Fatalf("expected external next redirect to be rejected, got %q", got)
 	}
 }
 

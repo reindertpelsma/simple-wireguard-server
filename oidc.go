@@ -31,6 +31,8 @@ type oidcUserinfo struct {
 	Roles []string `json:"roles"`
 }
 
+const oidcResponseBodyLimit int64 = 64 << 10
+
 func oidcEnabled() bool {
 	return strings.TrimSpace(*oidcIssuer) != "" && strings.TrimSpace(*oidcClientID) != ""
 }
@@ -57,7 +59,7 @@ func fetchOIDCDiscovery(ctxReq *http.Request) (oidcDiscovery, error) {
 		return oidcDiscovery{}, fmt.Errorf("OIDC discovery returned %d", resp.StatusCode)
 	}
 	var d oidcDiscovery
-	if err := json.NewDecoder(resp.Body).Decode(&d); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, oidcResponseBodyLimit)).Decode(&d); err != nil {
 		return oidcDiscovery{}, err
 	}
 	if d.AuthorizationEndpoint == "" || d.TokenEndpoint == "" || d.UserinfoEndpoint == "" {
@@ -196,7 +198,7 @@ func fetchOIDCUserinfo(r *http.Request, d oidcDiscovery, accessToken string) (oi
 		return oidcUserinfo{}, fmt.Errorf("OIDC userinfo returned %d", resp.StatusCode)
 	}
 	var info oidcUserinfo
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, oidcResponseBodyLimit)).Decode(&info); err != nil {
 		return oidcUserinfo{}, err
 	}
 	return info, nil

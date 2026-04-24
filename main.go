@@ -918,6 +918,7 @@ func initGlobalSettings() {
 		}
 	}
 
+	migrateAtRestCiphertexts()
 	bootstrapBuiltInGroups()
 }
 
@@ -1088,46 +1089,181 @@ func verifyPassword(password, encodedHash string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(encodedHash), []byte(password)) == nil
 }
 
-func getDBEncryptionKey() []byte {
-	priv := getConfig("server_privkey")
-	h := sha256.Sum256([]byte(priv))
-	return h[:]
+const atRestCipherPrefix = "v2:"
+
+func currentAtRestEncryptionKey() ([32]byte, bool) {
+	if len(hmacSecret) != 32 {
+		return [32]byte{}, false
+	}
+	allZero := true
+	for _, b := range hmacSecret {
+		if b != 0 {
+			allZero = false
+			break
+		}
+	}
+	if allZero {
+		return [32]byte{}, false
+	}
+	buf := make([]byte, 0, len("uwgsocks-ui/at-rest/v2")+len(hmacSecret))
+	buf = append(buf, "uwgsocks-ui/at-rest/v2"...)
+	buf = append(buf, hmacSecret...)
+	return sha256.Sum256(buf), true
+}
+
+func legacyAtRestEncryptionKey() ([32]byte, bool) {
+	priv := strings.TrimSpace(getConfig("server_privkey"))
+	if priv == "" {
+		return [32]byte{}, false
+	}
+	return sha256.Sum256([]byte(priv)), true
 }
 
 func encryptAtRest(plain string) string {
 	if plain == "" {
 		return ""
 	}
-	key := getDBEncryptionKey()
-	block, _ := aes.NewCipher(key)
-	gcm, _ := cipher.NewGCM(block)
+	if key, ok := currentAtRestEncryptionKey(); ok {
+		return atRestCipherPrefix + encryptAtRestWithKey(plain, key[:])
+	}
+	if legacy, ok := legacyAtRestEncryptionKey(); ok {
+		return encryptAtRestWithKey(plain, legacy[:])
+	}
+	return ""
+}
+
+func decryptAtRest(cipherText string) string {
+	if cipherText == "" {
+		return ""
+	}
+	currentKey, currentOK := currentAtRestEncryptionKey()
+	legacyKey, legacyOK := legacyAtRestEncryptionKey()
+	if strings.HasPrefix(cipherText, atRestCipherPrefix) {
+		if !currentOK {
+			return ""
+		}
+		plain, ok := decryptAtRestWithKey(strings.TrimPrefix(cipherText, atRestCipherPrefix), currentKey[:])
+		if !ok {
+			return ""
+		}
+		return plain
+	}
+	if currentOK {
+		if plain, ok := decryptAtRestWithKey(cipherText, currentKey[:]); ok {
+			return plain
+		}
+	}
+	if legacyOK {
+		if plain, ok := decryptAtRestWithKey(cipherText, legacyKey[:]); ok {
+			return plain
+		}
+	}
+	return ""
+}
+
+func encryptAtRestWithKey(plain string, key []byte) string {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return ""
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return ""
+	}
 	nonce := make([]byte, gcm.NonceSize())
-	rand.Read(nonce)
+	if _, err := rand.Read(nonce); err != nil {
+		return ""
+	}
 	cipherText := gcm.Seal(nonce, nonce, []byte(plain), nil)
 	return base64.StdEncoding.EncodeToString(cipherText)
 }
 
-func decryptAtRest(cipherB64 string) string {
-	if cipherB64 == "" {
-		return ""
-	}
+func decryptAtRestWithKey(cipherB64 string, key []byte) (string, bool) {
 	data, err := base64.StdEncoding.DecodeString(cipherB64)
 	if err != nil {
-		return ""
+		return "", false
 	}
-	key := getDBEncryptionKey()
-	block, _ := aes.NewCipher(key)
-	gcm, _ := cipher.NewGCM(block)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", false
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", false
+	}
 	nonceSize := gcm.NonceSize()
 	if len(data) < nonceSize {
-		return ""
+		return "", false
 	}
 	nonce, cipherText := data[:nonceSize], data[nonceSize:]
 	plain, err := gcm.Open(nil, nonce, cipherText, nil)
 	if err != nil {
-		return ""
+		return "", false
 	}
-	return string(plain)
+	return string(plain), true
+}
+
+func migrateAtRestCiphertexts() {
+	if gdb == nil {
+		return
+	}
+	var users []User
+	gdb.Find(&users)
+	for _, user := range users {
+		if needsAtRestMigration(user.TOTPSecret) {
+			if plain := decryptAtRest(user.TOTPSecret); plain != "" {
+				gdb.Model(&User{}).Where("id = ?", user.ID).Update("totp_secret", encryptAtRest(plain))
+			}
+		}
+	}
+
+	var peers []Peer
+	gdb.Find(&peers)
+	for _, peer := range peers {
+		updates := map[string]interface{}{}
+		if needsAtRestMigration(peer.PresharedKey) {
+			if plain := decryptAtRest(peer.PresharedKey); plain != "" {
+				updates["preshared_key"] = encryptAtRest(plain)
+			}
+		}
+		if needsAtRestMigration(peer.EncryptedPrivateKey) {
+			if plain := decryptAtRest(peer.EncryptedPrivateKey); plain != "" {
+				updates["encrypted_private_key"] = encryptAtRest(plain)
+			}
+		}
+		if needsAtRestMigration(peer.PrivateKey) {
+			if plain := decryptAtRest(peer.PrivateKey); plain != "" {
+				updates["private_key"] = encryptAtRest(plain)
+			}
+		}
+		if len(updates) > 0 {
+			gdb.Model(&Peer{}).Where("id = ?", peer.ID).Updates(updates)
+		}
+	}
+
+	var links []SharedConfigLink
+	gdb.Find(&links)
+	for _, link := range links {
+		if needsAtRestMigration(link.EncryptedToken) {
+			if plain := decryptAtRest(link.EncryptedToken); plain != "" {
+				gdb.Model(&SharedConfigLink{}).Where("id = ?", link.ID).Update("encrypted_token", encryptAtRest(plain))
+			}
+		}
+	}
+
+	var creds []TURNCredential
+	gdb.Find(&creds)
+	for _, cred := range creds {
+		if needsAtRestMigration(cred.PasswordEncrypted) {
+			if plain := decryptAtRest(cred.PasswordEncrypted); plain != "" {
+				gdb.Model(&TURNCredential{}).Where("id = ?", cred.ID).Update("password_encrypted", encryptAtRest(plain))
+			}
+		}
+	}
+}
+
+func needsAtRestMigration(cipherText string) bool {
+	return cipherText != "" && !strings.HasPrefix(cipherText, atRestCipherPrefix)
 }
 
 // --- Handlers ---
@@ -1140,15 +1276,21 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSONRequest(w, r, &req, smallJSONBodyLimit) {
 		return
 	}
+	limitKeys := []string{authRateLimitIPKey(r), authRateLimitUserKey(req.Username)}
+	if !requireAuthRateLimit(w, limitKeys...) {
+		return
+	}
 
 	var user User
 	if err := gdb.First(&user, "username = ?", req.Username).Error; err != nil {
+		authLimiter.recordFailure(limitKeys...)
 		log.Printf("Login failed: user %q not found from %s", req.Username, clientIPForRequest(r))
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
 	if !verifyPassword(req.Password, user.PasswordHash) {
+		authLimiter.recordFailure(limitKeys...)
 		log.Printf("Login failed for user %q from %s: wrong password", req.Username, clientIPForRequest(r))
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
@@ -1162,12 +1304,14 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !verifyTOTPCode(decryptAtRest(user.TOTPSecret), req.TOTPCode, time.Now()) {
+			authLimiter.recordFailure(limitKeys...)
 			log.Printf("Login failed for user %q from %s: invalid 2FA code", req.Username, clientIPForRequest(r))
 			http.Error(w, "Invalid two-factor code", http.StatusUnauthorized)
 			return
 		}
 	}
 
+	authLimiter.clear(limitKeys...)
 	token := issueUserToken(w, &user)
 
 	log.Printf("User %q logged in successfully from %s", req.Username, clientIPForRequest(r))

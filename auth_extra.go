@@ -205,10 +205,16 @@ func handleTOTPEnable(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSONRequest(w, r, &req, smallJSONBodyLimit) {
 		return
 	}
+	limitKeys := []string{authRateLimitIPKey(r), authRateLimitTOTPKey(user.ID)}
+	if !requireAuthRateLimit(w, limitKeys...) {
+		return
+	}
 	if !verifyTOTPCode(decryptAtRest(user.TOTPSecret), req.Code, time.Now()) {
+		authLimiter.recordFailure(limitKeys...)
 		http.Error(w, "Invalid two-factor code", http.StatusUnauthorized)
 		return
 	}
+	authLimiter.clear(limitKeys...)
 	gdb.Model(&user).Updates(map[string]interface{}{"totp_enabled": true})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -238,14 +244,21 @@ func handleReauth(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSONRequest(w, r, &req, smallJSONBodyLimit) {
 		return
 	}
+	limitKeys := []string{authRateLimitIPKey(r), authRateLimitUserKey(user.Username)}
+	if !requireAuthRateLimit(w, limitKeys...) {
+		return
+	}
 	if !verifyPassword(req.Password, user.PasswordHash) {
+		authLimiter.recordFailure(limitKeys...)
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
 	if user.TOTPEnabled && !verifyTOTPCode(decryptAtRest(user.TOTPSecret), req.TOTPCode, time.Now()) {
+		authLimiter.recordFailure(limitKeys...)
 		http.Error(w, "Invalid two-factor code", http.StatusUnauthorized)
 		return
 	}
+	authLimiter.clear(limitKeys...)
 	refreshUserSudo(&user)
 	w.WriteHeader(http.StatusNoContent)
 }

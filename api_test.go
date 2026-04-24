@@ -27,6 +27,7 @@ func setupTestDB(t *testing.T) {
 	var err error
 	bootstrapState = bootstrapInfo{}
 	lastPushedACLHash = ""
+	authLimiter.reset()
 	oldManage := *manageDaemon
 	*manageDaemon = false
 	if gdb != nil {

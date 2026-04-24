@@ -420,9 +420,7 @@ func handleServiceAuthStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Service not found", http.StatusNotFound)
 		return
 	}
-	if nextURL == "" {
-		nextURL = serviceExternalScheme(r) + "://" + svc.Host + "/"
-	}
+	nextURL = sanitizeServiceNextURL(r, svc, nextURL)
 	authToken := encryptServiceAuthToken(serviceAuthToken{
 		SessionID: token,
 		Service:   svc.Name,
@@ -469,11 +467,39 @@ func handleServiceAuthCallback(w http.ResponseWriter, r *http.Request, svc Expos
 		Secure:   requestScheme(r) == "https",
 		SameSite: http.SameSiteLaxMode,
 	})
-	nextURL := r.Form.Get("next")
-	if nextURL == "" {
-		nextURL = "/"
-	}
+	nextURL := sanitizeServiceNextURL(r, svc, r.Form.Get("next"))
 	http.Redirect(w, r, nextURL, http.StatusFound)
+}
+
+func sanitizeServiceNextURL(r *http.Request, svc ExposedService, raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "/"
+	}
+	if strings.HasPrefix(raw, "/") && !strings.HasPrefix(raw, "//") {
+		return raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || !u.IsAbs() {
+		return "/"
+	}
+	if hostWithoutPort(u.Host) != hostWithoutPort(svc.Host) {
+		return "/"
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "/"
+	}
+	path := u.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+	if u.RawQuery != "" {
+		path += "?" + u.RawQuery
+	}
+	if u.Fragment != "" {
+		path += "#" + u.Fragment
+	}
+	return path
 }
 
 func serviceCookieIdentity(r *http.Request, svc ExposedService) (accessIdentity, bool) {
