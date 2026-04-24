@@ -15,3 +15,4 @@ These pages describe the stable surfaces behind the browser UI:
 - [Socket protocol](socket-protocol.md)
 - [Testing](testing.md)
 - [OpenAPI schema](openapi.yaml)
+- [OpenAPI HTML reference](openapi.html)
