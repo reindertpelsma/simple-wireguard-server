@@ -8,9 +8,9 @@ service exposure.
 It manages `uwgsocks` by default and can switch to `uwgkm` when you want kernel
 WireGuard on Linux.
 
-If you want the convenience of `wg-easy` style client management but you also
-want groups, ACLs, protected subdomain exposure, and the option to stay fully
-rootless, this is the control plane for that.
+If you want a browser UI for managing WireGuard users and client configs, plus
+groups, ACLs, protected subdomain exposure, and the option to stay rootless,
+this is the control plane for that.
 
 For most deployments you only need two binaries on the same host:
 
