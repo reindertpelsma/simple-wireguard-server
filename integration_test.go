@@ -30,11 +30,11 @@ func TestIntegrationManagedDaemonRuntimeAndProxy(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
-	requireUDPPort(t, 51820)
 
 	daemonBin := buildIntegrationUwgsocks(t)
 	apiPort := freeIntegrationTCPPort(t)
 	httpProxyPort := freeIntegrationTCPPort(t)
+	wgPort := freeIntegrationUDPPort(t)
 	dataDir := t.TempDir()
 	setupIntegrationGlobals(t, dataDir, daemonBin, fmt.Sprintf("http://127.0.0.1:%d", apiPort), "integration-token")
 	setupTestDB(t)
@@ -47,6 +47,7 @@ func TestIntegrationManagedDaemonRuntimeAndProxy(t *testing.T) {
 	setTestConfig(t, "acl_outbound_default", "deny")
 	setTestConfig(t, "acl_relay_default", "deny")
 	setTestConfig(t, "yaml_l3_forwarding", "true")
+	setTestConfig(t, "yaml_wg_listen_port", fmt.Sprint(wgPort))
 
 	if err := gdb.Create(&Group{Name: "engineering", Subnet: "100.100.8.0/24", SubnetIPv6: "fd00:100:8::/64"}).Error; err != nil {
 		t.Fatal(err)
@@ -83,7 +84,7 @@ func TestIntegrationManagedDaemonRuntimeAndProxy(t *testing.T) {
 	defer stopClientEcho()
 	clientLocalForwardPort := freeIntegrationTCPPort(t)
 	reversePort := 18091
-	stopClient := startIntegrationClientDaemon(t, daemonBin, dataDir, clientKey, peer, assignedIPv4, clientEchoPort, clientEchoTargetPort, clientLocalForwardPort, reversePort)
+	stopClient := startIntegrationClientDaemon(t, daemonBin, dataDir, clientKey, peer, assignedIPv4, clientEchoPort, clientEchoTargetPort, clientLocalForwardPort, reversePort, wgPort)
 	defer stopClient()
 	waitForDaemonPeerHandshake(t, clientKey.PublicKey().String())
 
@@ -132,11 +133,11 @@ func TestIntegrationUISmokeLoginConfigAndProxy(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
-	requireUDPPort(t, 51820)
 
 	daemonBin := buildIntegrationUwgsocks(t)
 	apiPort := freeIntegrationTCPPort(t)
 	httpProxyPort := freeIntegrationTCPPort(t)
+	wgPort := freeIntegrationUDPPort(t)
 	dataDir := t.TempDir()
 	setupIntegrationGlobals(t, dataDir, daemonBin, fmt.Sprintf("http://127.0.0.1:%d", apiPort), "integration-token")
 	setupTestDB(t)
@@ -148,6 +149,7 @@ func TestIntegrationUISmokeLoginConfigAndProxy(t *testing.T) {
 	setTestConfig(t, "acl_outbound_default", "deny")
 	setTestConfig(t, "acl_relay_default", "deny")
 	setTestConfig(t, "yaml_l3_forwarding", "true")
+	setTestConfig(t, "yaml_wg_listen_port", fmt.Sprint(wgPort))
 
 	if err := gdb.Create(&Group{Name: "engineering", Subnet: "100.100.8.0/24", SubnetIPv6: "fd00:100:8::/64"}).Error; err != nil {
 		t.Fatal(err)
@@ -259,7 +261,7 @@ func TestIntegrationUISmokeLoginConfigAndProxy(t *testing.T) {
 	defer stopClientEcho()
 	clientLocalForwardPort := freeIntegrationTCPPort(t)
 	reversePort := 18092
-	stopClient := startIntegrationClientDaemon(t, daemonBin, dataDir, mustIntegrationKeyFromPrivate(t, privateCfg.EncryptedPrivateKey), dbPeer, assignedIPv4, clientEchoPort, clientEchoTargetPort, clientLocalForwardPort, reversePort)
+	stopClient := startIntegrationClientDaemon(t, daemonBin, dataDir, mustIntegrationKeyFromPrivate(t, privateCfg.EncryptedPrivateKey), dbPeer, assignedIPv4, clientEchoPort, clientEchoTargetPort, clientLocalForwardPort, reversePort, wgPort)
 	defer stopClient()
 	waitForDaemonPeerHandshake(t, peers[0].PublicKey)
 
@@ -353,7 +355,7 @@ func buildIntegrationUIHandler() http.Handler {
 	return wrapRootHandler(mux)
 }
 
-func startIntegrationClientDaemon(t *testing.T, daemonBin, dir string, key wgtypes.Key, peer Peer, assignedIPv4 netip.Addr, clientEchoPort, clientEchoTargetPort, localForwardPort, reversePort int) func() {
+func startIntegrationClientDaemon(t *testing.T, daemonBin, dir string, key wgtypes.Key, peer Peer, assignedIPv4 netip.Addr, clientEchoPort, clientEchoTargetPort, localForwardPort, reversePort, serverWGPort int) func() {
 	t.Helper()
 	cfg := map[string]interface{}{
 		"wireguard": map[string]interface{}{
@@ -362,7 +364,7 @@ func startIntegrationClientDaemon(t *testing.T, daemonBin, dir string, key wgtyp
 			"peers": []map[string]interface{}{{
 				"public_key":           getConfig("server_pubkey"),
 				"preshared_key":        decryptAtRest(peer.PresharedKey),
-				"endpoint":             "127.0.0.1:51820",
+				"endpoint":             fmt.Sprintf("127.0.0.1:%d", serverWGPort),
 				"allowed_ips":          []string{"100.100.0.0/16"},
 				"persistent_keepalive": 1,
 			}},
@@ -793,6 +795,17 @@ func freeIntegrationTCPPort(t *testing.T) int {
 	}
 	defer ln.Close()
 	return ln.Addr().(*net.TCPAddr).Port
+}
+
+func freeIntegrationUDPPort(t *testing.T) int {
+	t.Helper()
+	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := conn.LocalAddr().(*net.UDPAddr).Port
+	_ = conn.Close()
+	return port
 }
 
 func requireUDPPort(t *testing.T, port int) {

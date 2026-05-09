@@ -770,10 +770,10 @@ func ensureDefaultTransport() {
 		return
 	}
 	gdb.Create(&TransportConfig{
-		Name:       "udp",
-		Base:       "udp",
-		Listen:     true,
-		ListenPort: 51820,
+		Name:   "udp",
+		Base:   "udp",
+		Listen: true,
+		// ListenPort 0 defers to wireguard.listen_port (set from yaml_wg_listen_port config key).
 	})
 }
 
@@ -3651,6 +3651,9 @@ func generateCanonicalYAML() {
 
 func buildCanonicalYAMLBytes(applyCustom bool) []byte {
 	port := 51820
+	if p, _ := strconv.Atoi(getConfig("yaml_wg_listen_port")); p > 0 {
+		port = p
+	}
 	mtu, _ := strconv.Atoi(getConfig("global_mtu"))
 
 	// Ensure unix sockets are absolute paths relative to dataDir
