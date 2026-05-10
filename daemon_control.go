@@ -22,6 +22,11 @@ var daemonState = struct {
 	stopping atomic.Bool
 }{}
 
+// daemonCrashExit controls whether an unexpected daemon exit terminates this
+// process via os.Exit(1). True in production; tests set it false so a daemon
+// crash surfaces as a test failure rather than killing the test binary.
+var daemonCrashExit = true
+
 func startManagedDaemon() error {
 	time.Sleep(1 * time.Second)
 
@@ -56,7 +61,7 @@ func startManagedDaemon() error {
 		if err != nil {
 			log.Printf("Managed daemon exited: %v", err)
 		}
-		if !intentional {
+		if !intentional && daemonCrashExit {
 			log.Printf("Managed daemon exited unexpectedly; shutting down web server")
 			os.Exit(1)
 		}

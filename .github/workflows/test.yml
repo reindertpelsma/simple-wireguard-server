@@ -90,7 +90,8 @@ jobs:
         shell: bash
         run: |
           cp -r frontend/dist ./dist
-          UWGKM_BIN="$PWD/uwgkm" go test -tags integration -count=1 -timeout 60s -run TestIntegrationUwgKM ./...
+          # uwgkm needs root to create WireGuard interfaces via netlink.
+          sudo -E UWGKM_BIN="$PWD/uwgkm" "$(which go)" test -tags integration -count=1 -timeout 60s -run TestIntegrationUwgKM ./...
 
   cross-build:
     name: cross-build ${{ matrix.goos }} ${{ matrix.goarch }}

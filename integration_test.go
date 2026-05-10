@@ -282,12 +282,16 @@ func setupIntegrationGlobals(t *testing.T, dir, daemon, apiURL, token string) {
 	t.Helper()
 	oldDataDir, oldDaemon, oldURL, oldToken := *dataDir, *daemonPath, *uwgsocksURL, *uwgsocksToken
 	oldManage, oldSystem := *manageDaemon, *systemMode
+	oldCrashExit := daemonCrashExit
 	*dataDir = dir
 	*daemonPath = daemon
 	*uwgsocksURL = apiURL
 	*uwgsocksToken = token
 	*manageDaemon = true
 	*systemMode = false
+	// Disable process exit on daemon crash in tests; daemon failures surface
+	// as request errors or t.Fatal calls, not process termination.
+	daemonCrashExit = false
 	t.Cleanup(func() {
 		*dataDir = oldDataDir
 		*daemonPath = oldDaemon
@@ -295,6 +299,7 @@ func setupIntegrationGlobals(t *testing.T, dir, daemon, apiURL, token string) {
 		*uwgsocksToken = oldToken
 		*manageDaemon = oldManage
 		*systemMode = oldSystem
+		daemonCrashExit = oldCrashExit
 	})
 }
 
@@ -863,6 +868,10 @@ func TestIntegrationUwgKM(t *testing.T) {
 	// uwgkm requires the kernel WireGuard module.
 	if _, err := os.Stat("/sys/module/wireguard"); err != nil {
 		t.Skip("kernel WireGuard module not loaded (modprobe wireguard); required by uwgkm")
+	}
+	// uwgkm requires root (CAP_NET_ADMIN) to create the WireGuard interface.
+	if os.Getuid() != 0 {
+		t.Skip("TestIntegrationUwgKM requires root; run as root or with sudo")
 	}
 
 	apiPort := freeIntegrationTCPPort(t)
