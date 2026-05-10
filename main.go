@@ -84,6 +84,10 @@ var (
 	systemMode = flag.Bool("system", false, "Use kernel WireGuard (requires root)")
 	autoSystem = flag.Bool("auto-system", false, "Auto-detect and use kernel WireGuard if possible")
 	dataDir    = flag.String("data-dir", ".", "Directory to store configuration and database files")
+	// runAs is Linux-only: "user:group" or "uid:gid". When set the process drops
+	// from root to this identity after chowning data files, retaining
+	// CAP_NET_ADMIN as ambient so uwgkm can inherit it without setuid bits.
+	runAs = flag.String("run-as", "", "Drop privileges to user:group after startup (Linux system mode only)")
 )
 
 var gdb *gorm.DB
@@ -551,15 +555,43 @@ func main() {
 			}
 		}
 	}
+	// SYSTEM_MODE env var must be resolved before privilege drop so --run-as
+	// can validate that system mode is active.
+	if os.Getenv("SYSTEM_MODE") == "true" {
+		*systemMode = true
+		log.Println("SYSTEM_MODE=true environment variable found, enabling system WireGuard mode.")
+	}
+
 	os.MkdirAll(*dataDir, 0755)
+
+	if *runAs != "" {
+		if !*systemMode {
+			log.Fatalf("--run-as requires --system (or SYSTEM_MODE=true)")
+		}
+		uid, gid, err := resolveRunAsIDs(*runAs)
+		if err != nil {
+			log.Fatalf("--run-as: %v", err)
+		}
+		if err := chownDataDir(*dataDir, uid, gid); err != nil {
+			log.Printf("warning: chown data dir: %v", err)
+		}
+		if err := dropPrivilegesKeepNetAdmin(uid, gid); err != nil {
+			log.Fatalf("privilege drop: %v", err)
+		}
+	}
+
 	rand.Read(hmacSecret)
 	initDB()
 	initGlobalSettings()
 	maybeGenerateBootstrapConfig()
 
-	if os.Getenv("SYSTEM_MODE") == "true" {
-		*systemMode = true
-		log.Println("SYSTEM_MODE=true environment variable found, enabling system WireGuard mode.")
+	// For managed system mode, generate an API token for uwgkm authentication
+	// if the caller has not already provided one.
+	if *systemMode && *manageDaemon && *uwgsocksToken == "" {
+		tokenBytes := make([]byte, 32)
+		rand.Read(tokenBytes)
+		*uwgsocksToken = hex.EncodeToString(tokenBytes)
+		log.Printf("Generated uwgkm API token for managed system mode")
 	}
 
 	*daemonPath = findDaemon(*systemMode)
@@ -578,6 +610,15 @@ func main() {
 		generateTurnCanonicalYAML()
 		if err := startManagedTURNDaemon(); err != nil {
 			log.Printf("Failed to start managed TURN daemon: %v", err)
+		}
+
+		// After uwgkm is running, remove CAP_NET_ADMIN from the web server.
+		// The web server only needs network privileges for the initial interface
+		// setup; those are now delegated to uwgkm.
+		if *runAs != "" && *systemMode {
+			if err := dropNetAdmin(); err != nil {
+				log.Printf("warning: %v", err)
+			}
 		}
 	}
 

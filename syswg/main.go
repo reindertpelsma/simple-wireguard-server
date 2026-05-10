@@ -30,10 +30,12 @@ import (
 )
 
 var (
-	apiListen  = flag.String("api-listen", "unix:///tmp/uwgsocks.sock", "API listen address")
-	ifName     = flag.String("interface", "wg0", "WireGuard interface name")
-	wgConfig   = flag.String("config", "uwg_canonical.yaml", "Canonical YAML config")
-	masquerade = flag.Bool("masquerade", true, "Enable NAT masquerading for peers")
+	apiListen     = flag.String("api-listen", "unix:///tmp/uwgsocks.sock", "API listen address")
+	ifName        = flag.String("interface", "wg0", "WireGuard interface name")
+	wgConfig      = flag.String("config", "uwg_canonical.yaml", "Canonical YAML config")
+	masquerade    = flag.Bool("masquerade", true, "Enable NAT masquerading for peers")
+	apiToken      = flag.String("api-token", "", "Bearer token required on all API requests (recommended for TCP listeners; optional for unix sockets)")
+	cleanupOnExit = flag.Bool("cleanup-on-exit", true, "Remove WireGuard interface and nftables rules on exit")
 )
 
 type Manager struct {
@@ -114,13 +116,22 @@ func main() {
 	mux.HandleFunc("POST /v1/acls/{list}", m.handleAddACL)
 	mux.HandleFunc("DELETE /v1/acls/{list}", m.handleDeleteACL)
 
-	// Listen
+	// Wrap with bearer token middleware when a token is configured.
+	var handler http.Handler = mux
+	if *apiToken != "" {
+		handler = bearerAuthMiddleware(*apiToken, mux)
+	}
 
+	// Listen
 	var ln net.Listener
 	if strings.HasPrefix(*apiListen, "unix://") {
 		path := strings.TrimPrefix(*apiListen, "unix://")
 		os.Remove(path)
 		ln, err = net.Listen("unix", path)
+		if err == nil {
+			// Only the owning user should be able to connect.
+			os.Chmod(path, 0600)
+		}
 	} else {
 		ln, err = net.Listen("tcp", *apiListen)
 	}
@@ -128,7 +139,7 @@ func main() {
 		log.Fatalf("Failed to listen: %v", err)
 	}
 
-	go http.Serve(ln, mux)
+	go http.Serve(ln, handler)
 	log.Printf("uwgkm (Kernel Manager) listening on %s", *apiListen)
 
 	// Wait for signal
@@ -136,6 +147,18 @@ func main() {
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
 	m.Cleanup()
+}
+
+// bearerAuthMiddleware rejects requests that do not carry the expected token.
+func bearerAuthMiddleware(token string, next http.Handler) http.Handler {
+	expected := "Bearer " + token
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != expected {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func NewManager() (*Manager, error) {
@@ -324,7 +347,57 @@ func (m *Manager) Cleanup() {
 	m.mu.Unlock()
 
 	m.client.Close()
+
+	if *cleanupOnExit {
+		m.cleanupNetworkState()
+	}
+
 	log.Println("uwgkm shutting down...")
+}
+
+// cleanupNetworkState removes the WireGuard interface and nftables tables.
+// Called on exit when --cleanup-on-exit is set (default true).
+func (m *Manager) cleanupNetworkState() {
+	// Delete nftables ACL tables.
+	for _, name := range []string{"uwgkm_acl4", "uwgkm_acl6"} {
+		for _, family := range []nftables.TableFamily{nftables.TableFamilyIPv4, nftables.TableFamilyIPv6} {
+			c := &nftables.Conn{}
+			tables, err := c.ListTablesOfFamily(family)
+			if err != nil {
+				continue
+			}
+			for _, t := range tables {
+				if t != nil && t.Name == name {
+					dc := &nftables.Conn{}
+					dc.DelTable(t)
+					_ = dc.Flush()
+				}
+			}
+		}
+	}
+	// Delete NAT table.
+	{
+		c := &nftables.Conn{}
+		tables, err := c.ListTablesOfFamily(nftables.TableFamilyIPv4)
+		if err == nil {
+			for _, t := range tables {
+				if t != nil && t.Name == "uwgkm" {
+					dc := &nftables.Conn{}
+					dc.DelTable(t)
+					_ = dc.Flush()
+				}
+			}
+		}
+	}
+	// Delete WireGuard interface.
+	link, err := netlink.LinkByName(*ifName)
+	if err == nil {
+		if err := netlink.LinkDel(link); err != nil {
+			log.Printf("Failed to delete interface %s: %v", *ifName, err)
+		} else {
+			log.Printf("Deleted WireGuard interface %s", *ifName)
+		}
+	}
 }
 
 // --- API Handlers ---

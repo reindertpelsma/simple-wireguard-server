@@ -9,6 +9,8 @@ on:
 permissions:
   contents: write
   packages: write
+  id-token: write
+  attestations: write
 
 jobs:
   frontend:
@@ -128,6 +130,11 @@ jobs:
           ls -lh release
           file "release/${{ matrix.artifact_name }}" || true
 
+      - name: Attest uwgsocks-ui binary
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: release/${{ matrix.artifact_name }}
+
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
@@ -163,6 +170,11 @@ jobs:
           set -euo pipefail
           mkdir -p ../release
           go build -trimpath -ldflags='-s -w' -o "../release/${{ matrix.artifact_name }}" .
+
+      - name: Attest uwgkm binary
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: release/${{ matrix.artifact_name }}
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -223,7 +235,8 @@ jobs:
           tags: |
             type=ref,event=tag
 
-      - uses: docker/build-push-action@v6
+      - id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
@@ -233,3 +246,10 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-contexts: |
             uwgsocks-src=./userspace-wireguard-socks
+
+      - name: Attest container image
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/simple-wireguard-server
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true

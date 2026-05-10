@@ -10,14 +10,16 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
 
 var daemonState = struct {
 	sync.Mutex
-	cmd  *exec.Cmd
-	done chan error
+	cmd      *exec.Cmd
+	done     chan error
+	stopping atomic.Bool
 }{}
 
 func startManagedDaemon() error {
@@ -40,6 +42,10 @@ func startManagedDaemon() error {
 
 	go func(started *exec.Cmd) {
 		err := started.Wait()
+		// Check stopping before acquiring the lock: stopManagedDaemon sets
+		// stopping=true before SIGTERM so we always see it here even if
+		// stopManagedDaemon has not yet received from `done`.
+		intentional := daemonState.stopping.Load()
 		done <- err
 		daemonState.Lock()
 		if daemonState.cmd == started {
@@ -49,6 +55,10 @@ func startManagedDaemon() error {
 		daemonState.Unlock()
 		if err != nil {
 			log.Printf("Managed daemon exited: %v", err)
+		}
+		if !intentional {
+			log.Printf("Managed daemon exited unexpectedly; shutting down web server")
+			os.Exit(1)
 		}
 	}(cmd)
 	return nil
@@ -64,7 +74,11 @@ func buildDaemonCommand() *exec.Cmd {
 	}
 	var cmd *exec.Cmd
 	if *systemMode {
-		cmd = exec.Command(*daemonPath, "-config", resolvePath("uwg_canonical.yaml"), "-api-listen", apiListen)
+		args := []string{"-config", resolvePath("uwg_canonical.yaml"), "-api-listen", apiListen}
+		if *uwgsocksToken != "" {
+			args = append(args, "-api-token", *uwgsocksToken)
+		}
+		cmd = exec.Command(*daemonPath, args...)
 	} else {
 		cmd = exec.Command(*daemonPath, "--config", resolvePath("uwg_canonical.yaml"))
 	}
@@ -80,6 +94,11 @@ func stopManagedDaemon(timeout time.Duration) error {
 	if cmd == nil || cmd.Process == nil {
 		return nil
 	}
+
+	// Mark as intentional before sending the signal so the watcher goroutine
+	// does not treat this exit as a crash.
+	daemonState.stopping.Store(true)
+	defer daemonState.stopping.Store(false)
 
 	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil && !strings.Contains(err.Error(), "process already finished") {
 		return err

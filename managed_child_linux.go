@@ -11,5 +11,7 @@ func configureManagedChild(cmd *exec.Cmd) {
 	if cmd == nil {
 		return
 	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
+	// SIGTERM (not SIGKILL) so children — notably uwgkm — can run cleanup on
+	// parent death (delete WireGuard interface, flush nftables rules).
+	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGTERM}
 }
