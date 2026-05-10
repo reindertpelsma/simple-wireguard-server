@@ -1233,14 +1233,30 @@ func TestSharedConfigLinkOneUseFlow(t *testing.T) {
 		t.Fatalf("expected shared encrypted key, got %v", response["encrypted_private_key"])
 	}
 
+	// Second request within the grace period must succeed (network retry path).
 	req = httptest.NewRequest("GET", "/api/share/"+token, nil)
 	req.SetPathValue("token", token)
 	req.Header.Set("X-Nonce-Hash", "nonce-hash")
 	w = httptest.NewRecorder()
 	handleGetSharedConfig(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for retry within grace period, got %d: %s", w.Code, w.Body.String())
+	}
 
+	// Simulate the grace period expiring by back-dating UsedAt.
+	expired := time.Now().Add(-31 * time.Second)
+	if err := gdb.Model(&SharedConfigLink{}).Where("token_hash = ?", shareTokenHash(token)).
+		Update("used_at", expired).Error; err != nil {
+		t.Fatalf("back-date used_at: %v", err)
+	}
+
+	req = httptest.NewRequest("GET", "/api/share/"+token, nil)
+	req.SetPathValue("token", token)
+	req.Header.Set("X-Nonce-Hash", "nonce-hash")
+	w = httptest.NewRecorder()
+	handleGetSharedConfig(w, req)
 	if w.Code != http.StatusGone {
-		t.Fatalf("expected 410 after one-use link is consumed, got %d", w.Code)
+		t.Fatalf("expected 410 after grace period expired, got %d", w.Code)
 	}
 }
 

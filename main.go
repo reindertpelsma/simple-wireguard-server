@@ -1005,6 +1005,15 @@ func getConfig(k string) string {
 // --- Middlewares ---
 func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Strip any client-supplied identity headers before validation.
+		// We set these ourselves after token verification; accepting them from
+		// inbound requests would let a client impersonate any user ID if a
+		// handler were ever accidentally registered without this middleware.
+		r.Header.Del("X-User-Id")
+		r.Header.Del("X-Is-Admin")
+		r.Header.Del("X-Is-Moderator")
+		r.Header.Del("X-User-Role")
+
 		token := bearerTokenFromRequest(r)
 		if token == "" {
 			log.Printf("Auth failed: Missing token for %s %s from %s", r.Method, r.URL.Path, clientIPForRequest(r))
@@ -1029,12 +1038,9 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// Stamp the validated identity onto the request so downstream handlers
-		// can read it via currentUserFromRequest / r.Header.Get("X-User-Id").
-		// This is safe because Go's http.ServeMux only reaches these headers
-		// through our own handler chain — no external caller can set them on an
-		// inbound request and have them read here, since we overwrite the header
-		// unconditionally after token validation above.
+		// Stamp the validated identity so downstream handlers can read it via
+		// currentUserFromRequest / r.Header.Get("X-User-Id"). Client-supplied
+		// values were stripped above, so these headers are always server-authoritative.
 		r.Header.Set("X-User-Id", fmt.Sprint(user.ID))
 		r.Header.Set("X-Is-Admin", fmt.Sprint(userIsAdmin(user)))
 		r.Header.Set("X-Is-Moderator", fmt.Sprint(userIsModeratorOnly(user)))
@@ -1497,12 +1503,11 @@ func handleGetPeerPrivate(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleHMACNonce derives a per-nonce key from hmacSecret for client-side
-// E2E key derivation. The endpoint is behind authMiddleware (token required).
-// hmacSecret is generated with crypto/rand at first boot and never leaves the
-// server, so an authenticated caller can retrieve deterministic keying material
-// for their own nonce but cannot recover the root secret.
-// Note: no per-nonce rate limit beyond the session auth check. If this endpoint
-// is ever exposed without auth, add explicit rate limiting.
+// E2E key derivation. Requires a valid session token (authMiddleware), which
+// is also the effective rate limit — an attacker must already have valid auth.
+// hmacSecret is 32 bytes from crypto/rand, so precomputing nonce→key pairs
+// without knowing the secret is computationally infeasible regardless of how
+// many nonces are queried.
 func handleHMACNonce(w http.ResponseWriter, r *http.Request) {
 	nonce := r.URL.Query().Get("nonce")
 	if nonce == "" {

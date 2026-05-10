@@ -139,12 +139,20 @@ func handleGetSharedConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Share link not found", http.StatusNotFound)
 		return
 	}
-	// Note: the used_at check and the update below (line ~213) are not atomic.
-	// Two concurrent requests on the same token can both pass this check before
-	// either writes used_at. The window is small (one DB round-trip) and share
-	// links are single-use secrets — a double-use by the same holder is not a
-	// privilege escalation. Acceptable for the current threat model.
-	if link.UsedAt != nil {
+	// Share link one-use enforcement with a 30-second retry grace period.
+	//
+	// On first access UsedAt is recorded. Subsequent requests within
+	// shareGracePeriod of that timestamp are still served — this intentionally
+	// accommodates network retries: a client may re-send the same HTTP request
+	// if the first attempt times out before it receives the response, and we
+	// should not permanently burn the link on a network hiccup.
+	//
+	// The UsedAt write is not atomic with this read; two simultaneous requests
+	// can both pass the check before either commits. That race only widens the
+	// effective retry window by one extra round-trip — not a privilege
+	// escalation, since both requests come from the same token holder.
+	const shareGracePeriod = 30 * time.Second
+	if link.UsedAt != nil && time.Since(*link.UsedAt) > shareGracePeriod {
 		http.Error(w, "Share link already used", http.StatusGone)
 		return
 	}
@@ -213,7 +221,10 @@ func handleGetSharedConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	response.DistributePeers = filteredDPs
 
-	if link.OneUse {
+	if link.OneUse && link.UsedAt == nil {
+		// Stamp first-access time. Retries within shareGracePeriod are still
+		// served (see check above); we do not update this on subsequent hits so
+		// the 30-second window is anchored to the first request, not the last.
 		now := time.Now()
 		link.UsedAt = &now
 		gdb.Model(&link).Update("used_at", now)
