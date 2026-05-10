@@ -275,6 +275,11 @@ func handleLockSudo(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// currentUserFromRequest fetches the authenticated user by reading the
+// X-User-Id header that authMiddleware stamps on every request after token
+// validation. It must only be called from handlers that are already wrapped
+// by authMiddleware — calling it from an unauthenticated handler would allow
+// a caller to supply an arbitrary user ID.
 func currentUserFromRequest(w http.ResponseWriter, r *http.Request) (User, bool) {
 	id, err := strconv.ParseUint(r.Header.Get("X-User-Id"), 10, 64)
 	if err != nil {

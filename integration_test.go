@@ -300,9 +300,17 @@ func setupIntegrationGlobals(t *testing.T, dir, daemon, apiURL, token string) {
 
 func buildIntegrationUwgsocks(t *testing.T) string {
 	t.Helper()
+	// UWGSOCKS_BIN lets callers supply a pre-built binary (e.g. a downloaded
+	// release artifact) without rebuilding from source.
+	if bin := os.Getenv("UWGSOCKS_BIN"); bin != "" {
+		if _, err := os.Stat(bin); err != nil {
+			t.Fatalf("UWGSOCKS_BIN=%q not found: %v", bin, err)
+		}
+		return bin
+	}
 	repo := filepath.Join(os.Getenv("HOME"), "userspace-wireguard-socks")
 	if st, err := os.Stat(filepath.Join(repo, "go.mod")); err != nil || st.IsDir() {
-		t.Skipf("sibling userspace-wireguard-socks repo not found at %s", repo)
+		t.Skipf("sibling userspace-wireguard-socks repo not found at %s; set UWGSOCKS_BIN to a pre-built binary", repo)
 	}
 	bin := filepath.Join(t.TempDir(), "uwgsocks")
 	goBin := "go"
@@ -820,4 +828,64 @@ func requireUDPPort(t *testing.T, port int) {
 func fileExists(path string) bool {
 	st, err := os.Stat(path)
 	return err == nil && !st.IsDir()
+}
+
+// TestIntegrationUwgKM is a smoke test for the kernel-mode WireGuard daemon
+// (uwgkm). It starts the daemon, verifies the API is reachable, and stops it.
+// Skips automatically when the binary is absent or the kernel module is not
+// loaded. Set UWGKM_BIN to point at a specific binary path.
+func TestIntegrationUwgKM(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	// Locate the uwgkm binary.
+	kmBin := os.Getenv("UWGKM_BIN")
+	if kmBin == "" {
+		for _, c := range []string{"./uwgkm", "../uwgkm"} {
+			if abs, err := filepath.Abs(c); err == nil {
+				if fileExists(abs) {
+					kmBin = abs
+					break
+				}
+			}
+		}
+	}
+	if kmBin == "" {
+		if p, err := exec.LookPath("uwgkm"); err == nil {
+			kmBin = p
+		}
+	}
+	if kmBin == "" {
+		t.Skip("uwgkm binary not found; set UWGKM_BIN or place binary next to test")
+	}
+
+	// uwgkm requires the kernel WireGuard module.
+	if _, err := os.Stat("/sys/module/wireguard"); err != nil {
+		t.Skip("kernel WireGuard module not loaded (modprobe wireguard); required by uwgkm")
+	}
+
+	apiPort := freeIntegrationTCPPort(t)
+	wgPort := freeIntegrationUDPPort(t)
+	dataDir := t.TempDir()
+	apiURL := fmt.Sprintf("http://127.0.0.1:%d", apiPort)
+
+	setupIntegrationGlobals(t, dataDir, kmBin, apiURL, "uwgkm-integration-token")
+	// Enable system mode so buildDaemonCommand uses uwgkm's flag style.
+	oldSystem := *systemMode
+	*systemMode = true
+	t.Cleanup(func() { *systemMode = oldSystem })
+
+	setupTestDB(t)
+	ensureDefaultTransport()
+	setTestConfig(t, "yaml_wg_listen_port", fmt.Sprint(wgPort))
+	generateCanonicalYAML()
+
+	if err := startManagedDaemon(); err != nil {
+		t.Fatalf("start uwgkm: %v", err)
+	}
+	t.Cleanup(func() { _ = stopManagedDaemon(5 * time.Second) })
+
+	waitForDaemonStatus(t)
+	t.Logf("uwgkm smoke: API at %s is responsive", apiURL)
 }

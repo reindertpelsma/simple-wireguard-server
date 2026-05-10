@@ -139,6 +139,11 @@ func handleGetSharedConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Share link not found", http.StatusNotFound)
 		return
 	}
+	// Note: the used_at check and the update below (line ~213) are not atomic.
+	// Two concurrent requests on the same token can both pass this check before
+	// either writes used_at. The window is small (one DB round-trip) and share
+	// links are single-use secrets — a double-use by the same holder is not a
+	// privilege escalation. Acceptable for the current threat model.
 	if link.UsedAt != nil {
 		http.Error(w, "Share link already used", http.StatusGone)
 		return

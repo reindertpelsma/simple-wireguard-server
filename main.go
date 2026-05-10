@@ -692,7 +692,7 @@ func initDB() {
 		dialer = mysql.Open(*dbDSN)
 	case "postgres":
 		dialer = postgres.Open(*dbDSN)
-	default:
+	case "sqlite", "":
 		dbPath := *dbDSN
 		if *dbDSN == "wgui.db" {
 			dbPath = resolvePath("wgui.db")
@@ -701,6 +701,8 @@ func initDB() {
 		if err != nil {
 			log.Fatalf("Failed to initialize sqlite driver: %v", err)
 		}
+	default:
+		log.Fatalf("Unknown --db-type %q: must be sqlite, mysql, or postgres", *dbType)
 	}
 
 	gdb, err = gorm.Open(dialer, &gorm.Config{})
@@ -1027,6 +1029,12 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		// Stamp the validated identity onto the request so downstream handlers
+		// can read it via currentUserFromRequest / r.Header.Get("X-User-Id").
+		// This is safe because Go's http.ServeMux only reaches these headers
+		// through our own handler chain — no external caller can set them on an
+		// inbound request and have them read here, since we overwrite the header
+		// unconditionally after token validation above.
 		r.Header.Set("X-User-Id", fmt.Sprint(user.ID))
 		r.Header.Set("X-Is-Admin", fmt.Sprint(userIsAdmin(user)))
 		r.Header.Set("X-Is-Moderator", fmt.Sprint(userIsModeratorOnly(user)))
@@ -1488,6 +1496,13 @@ func handleGetPeerPrivate(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(peer)
 }
 
+// handleHMACNonce derives a per-nonce key from hmacSecret for client-side
+// E2E key derivation. The endpoint is behind authMiddleware (token required).
+// hmacSecret is generated with crypto/rand at first boot and never leaves the
+// server, so an authenticated caller can retrieve deterministic keying material
+// for their own nonce but cannot recover the root secret.
+// Note: no per-nonce rate limit beyond the session auth check. If this endpoint
+// is ever exposed without auth, add explicit rate limiting.
 func handleHMACNonce(w http.ResponseWriter, r *http.Request) {
 	nonce := r.URL.Query().Get("nonce")
 	if nonce == "" {
